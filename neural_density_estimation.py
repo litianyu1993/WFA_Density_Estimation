@@ -113,8 +113,8 @@ class hankel_density(nn.Module):
 
         self.double_pre = double_pre
         if double_pre:
-            self.double().cuda()
-        else:
+            self.double()
+        if device == 'cuda:0':
             self.cuda()
 
     def torch_mixture_gaussian(self, X, mu, sig, alpha):
@@ -169,8 +169,8 @@ class hankel_density(nn.Module):
     def forward(self, X):
         assert X.shape[2] == self.length, "trajectory length does not fit the network structure"
         if self.double_pre:
-            X = X.double().cuda()
-        else:
+            X = X.double()
+        if device == 'cuda:0':
             X = X.cuda()
 
         result = 0.

@@ -28,9 +28,9 @@ class density_wfa_finetune(nn.Module):
         self.A = density_wfa.A.requires_grad_(True)
         self.init_w = density_wfa.init_w.requires_grad_(True)
         self.double_pre = double_pre
-        if double_pre:
-            self.double().cuda()
-        else:
+        if self.double_pre:
+            self.double()
+        if self.device == 'cuda:0':
             self.cuda()
 
     def encoding(self, X):
@@ -40,9 +40,9 @@ class density_wfa_finetune(nn.Module):
         return torch.tanh(X)
 
     def forward(self, X):
-        if self.double_pre:
-            X = X.double().cuda()
-        else:
+        if double_pre:
+            X = X.double()
+        if device == 'cuda:0':
             X = X.cuda()
 
         result = 0.
@@ -151,9 +151,9 @@ if __name__ == '__main__':
             #     final_test = torch.concat([final_test, test_x])
 
             if k == 0:
-                hd = hankel_density(d, xd, r, mixture_number=mixture_n, L = L, double_pre=double_precision).cuda(device)
+                hd = hankel_density(d, xd, r, mixture_number=mixture_n, L = L, double_pre=double_precision).to(device)
             else:
-                hd = hankel_density(d, xd, r, mixture_number=mixture_n, L = L, double_pre=double_precision, previous_hd=hd).cuda(device)
+                hd = hankel_density(d, xd, r, mixture_number=mixture_n, L = L, double_pre=double_precision, previous_hd=hd).to(device)
             train_data = Dataset(data=[train_x])
             test_data = Dataset(data=[test_x])
 
