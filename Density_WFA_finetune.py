@@ -109,7 +109,7 @@ if __name__ == '__main__':
     d = 3 #input encoder output dimension
     xd = 1 #input dimension
     r = 3 #rank/number of mixtures
-    l = 3 #length in trianning (l, 2l, 2l+1)
+    l = 3 #length in training (l, 2l, 2l+1)
     Ls = [2*l+1, l, 2*l]
     mixture_n = r
 
@@ -117,13 +117,26 @@ if __name__ == '__main__':
     lr = 0.001
     epochs = 100
 
-    hmmmodel = hmm.GaussianHMM(n_components=3, covariance_type="full")
-    hmmmodel.startprob_ = np.array([0.6, 0.3, 0.1])
-    hmmmodel.transmat_ = np.array([[0.7, 0.2, 0.1],
-                                [0.3, 0.5, 0.2],
-                                [0.3, 0.3, 0.4]])
-    hmmmodel.means_ = np.array([[0.0], [3.0], [5.0]])
-    hmmmodel.covars_ = np.tile(np.identity(1), (3, 1, 1))
+    n_hmms = 4
+    n_states = 3
+    hmm_list = []
+    for i in range(n_hmms):
+        hmmmodel = hmm.GaussianHMM(n_components=3, covariance_type="full")
+        startprob = np.random.uniform(size=(n_states,))
+        startprob = startprob / startprob.sum()
+        transmat = np.random.uniform(size=(n_states, n_states))
+        transmat = transmat / transmat.sum(1)[:,None]
+        means = np.random.uniform(size=(n_states,1))
+        hmmmodel.startprob_ = startprob
+        hmmmodel.transmat_ = transmat
+        hmmmodel.means_ = means
+        # hmmmodel.startprob_ = np.array([0.6, 0.3, 0.1])
+        # hmmmodel.transmat_ = np.array([[0.7, 0.2, 0.1],
+        #                             [0.3, 0.5, 0.2],
+        #                             [0.3, 0.3, 0.4]])
+        # hmmmodel.means_ = np.array([[0.0], [3.0], [5.0]])
+        hmmmodel.covars_ = np.tile(np.identity(1), (n_states, 1, 1))
+        hmm_list.append(hmmmodel)
 
 
     if not load:
@@ -132,16 +145,21 @@ if __name__ == '__main__':
             L = Ls[k]
             train_x = np.zeros([N, xd, L])
             test_x = np.zeros([N, xd, L])
-            for i in range(N):
-                x, z = hmmmodel.sample(L)
-                train_x[i, :, :] = x.reshape(xd, -1)
-                x, z = hmmmodel.sample(L)
-                test_x[i, :, :] = x.reshape(xd, -1)
+            test_ground_truth_list = []
+            train_ground_truth_list = []
+            for h in range(n_hmms):
+                for i in range(N//n_hmms):
+                    x, z = hmm_list[h].sample(L)
+                    train_x[i, :, :] = x.reshape(xd, -1)
+                    x, z = hmm_list[h].sample(L)
+                    test_x[i, :, :] = x.reshape(xd, -1)
 
-            test_ground_truth = ground_truth_hmm(test_x, hmmmodel)
-            train_ground_truth = ground_truth_hmm(train_x, hmmmodel)
+                test_ground_truth = ground_truth_hmm(test_x, hmm_list[h])
+                train_ground_truth = ground_truth_hmm(train_x, hmm_list[h])
+                test_ground_truth_list.append(test_ground_truth)
+                train_ground_truth_list.append(train_ground_truth)
 
-            print(test_ground_truth, train_ground_truth)
+            print(test_ground_truth_list, train_ground_truth_list)
 
             train_x = torch.tensor(train_x).float()
             test_x = torch.tensor(test_x).float()
