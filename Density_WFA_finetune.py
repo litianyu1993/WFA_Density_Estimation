@@ -191,12 +191,12 @@ def learn_density_WFA(data, model_params, l, plot = True, out_file_name = None, 
             L = Ls[k]
             train_x = data[data_label[k][0]]
             test_x = data[data_label[k][1]]
-            print(data_label[k][0])
+            
             if k == 0:
-                hd = hankel_density(d, xd, r, mixture_number=mixture_n, L=L, double_pre=double_precision).cuda(device)
+                hd = hankel_density(d, xd, r, mixture_number=mixture_n, L=L, double_pre=double_precision).to(device)
             else:
                 hd = hankel_density(d, xd, r, mixture_number=mixture_n, L=L, double_pre=double_precision,
-                                    previous_hd=hd).cuda(device)
+                                    previous_hd=hd).to(device)
             train_data = Dataset(data=[train_x])
             test_data = Dataset(data=[test_x])
 

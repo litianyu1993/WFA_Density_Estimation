@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import pickle
 import time
+import os
 
 def sliding_window(X, window_size = 5):
     final_data = []
@@ -55,10 +56,10 @@ if __name__ == '__main__':
     model_params['mixture_n'] = model_params['r']
 
     exp_name = str(model_params)
-    exp_folder = 'UCRArchive_2018/Adiac/'
+    exp_folder = os.path.join('results','UCR_Adiac',exp_name)
 
-    train = np.genfromtxt(exp_folder + 'Adiac_TRAIN.tsv', delimiter='\t')
-    test = np.genfromtxt(exp_folder + 'Adiac_TEST.tsv', delimiter='\t')
+    train = np.genfromtxt(os.path.join('.', 'data', 'UCR_Adiac', 'Adiac_TRAIN.tsv'), delimiter='\t')
+    test = np.genfromtxt(os.path.join('.', 'data', 'UCR_Adiac', 'Adiac_TEST.tsv'), delimiter='\t')
     test = labelize(test, tensorize=True)
 
     train_x_tmp = sliding_window(train)
