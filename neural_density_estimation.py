@@ -63,12 +63,14 @@ class hankel_density(nn.Module):
 
         # if
         if previous_hd is None:
-            self.mu_out = torch.nn.Linear(self.nade_hid[-1], mixture_number, bias=True)
-            self.sig_out= torch.nn.Linear(self.nade_hid[-1], mixture_number, bias=True)
-            self.alpha_out = torch.nn.Linear(self.nade_hid[-1], mixture_number, bias=True)
+            self.mu_out = torch.nn.Linear(self.nade_hid[-1], mixture_number*xd, bias=True)
+            self.sig_out= torch.nn.Linear(self.nade_hid[-1], mixture_number*(xd**2), bias=True)
+            self.alpha_out = torch.nn.Linear(self.nade_hid[-1], mixture_number*xd, bias=True)
 
             self.encoder_1 = torch.nn.Linear(xd, self.encoder_hid[0], bias=True)
             self.encoder_2 = torch.nn.Linear(self.encoder_hid[0], d, bias=True)
+
+            # self.encoder_bn = torch.nn.BatchNorm1d(d)
 
         else:
             self.mu_out = previous_hd.mu_out
@@ -91,31 +93,22 @@ class hankel_density(nn.Module):
             self.encoder_2.weight.requires_grad = False
             self.encoder_2.bias.requires_grad = False
 
-        # if mu_out is None:
-        #     self.mu_out1 = torch.nn.Linear(self.nade_hid[-1] , mixture_number, bias=True)
-        #     self.mu_out2 = torch.nn.Linear(self.nade_hid[-1], mixture_number, bias=True)
-        # else:
-        #     self.mu_out1= mu_out
-        #     self.mu_out.weight.requires_grad = False
-        #     self.mu_out.bias.requires_grad = False
-        #
-        # if sig_out is None:
-        #     self.sig_out = torch.nn.Linear(self.nade_hid[-1], mixture_number, bias = False)
-        # else:
-        #     self.sig_out = sig_out
-        #     self.sig_out.weight.requires_grad = False
-        #
-        # if alpha_out is None:
-        #     self.alpha_out = torch.nn.Linear(self.nade_hid[-1], mixture_number, bias=False)
-        # else:
-        #     self.alpha_out = alpha_out
-        #     self.alpha_out.weight.requires_grad = False
+            # self.encoder_bn = previous_hd.encoder_bn
+            # self.encoder_bn.weight.requires_grad = False
+            # self.encoder_bn.bias.requires_grad = False
+
 
         self.double_pre = double_pre
         if double_pre:
+<<<<<<< HEAD
             self.double()
         if device == 'cuda:0':
             self.cuda()
+=======
+            self.double().cuda()
+        else:
+            self.float().cuda()
+>>>>>>> 42edec2714c7461aa0e4a2e76d6ca845083528a9
 
     def torch_mixture_gaussian(self, X, mu, sig, alpha):
         mix = D.Categorical(alpha)
@@ -131,71 +124,61 @@ class hankel_density(nn.Module):
             h = torch.relu(h)
         mu = self.mu_out(h)
         sig = torch.exp(self.sig_out(h))
-        # print(torch.mean(sig))
         alpha = torch.softmax(self.alpha_out(h), dim = 1)
         return self.torch_mixture_gaussian(X, mu, sig, alpha)
 
-    # def gaussian(self, X, mu, sig):
-    #
-    #     # print("X",X.shape, mu.shape, sig.shape)
-    #     result = (X - mu) ** 2
-    #     # print(result[0])
-    #     tmp_sig = 2*sig**2
-    #     result = -torch.div(result, tmp_sig)
-    #     pi = torch.acos(torch.zeros(1)).item() * 2
-    #     normalizer = 1. / (((2 * pi) ** 0.5) * sig)
-    #     return torch.mul(normalizer,torch.exp(result))
-    #
-    # def mixture_gaussian(self, X, mu, sig, alpha):
-    #     result = 0.
-    #     for i in range(mu.shape[1]):
-    #         tmp_result = self.gaussian(X, mu[:, i], sig[:, i])
-    #         # print(mu[:, i].shape, sig[:, i].shape)
-    #         # print(sig[:, i])
-    #         # gassuain_models = Normal(mu[:, i], sig[:, i])
-    #         # tmp_result = 10**(gassuain_models.log_prob(X))
-    #         # print(X.shape, tmp_result.shape)
-    #         result =result + torch.mul(alpha[:, i], tmp_result)
-    #         # print(tmp_result[0])
-    #
-    #     return result
+
 
     def encoding(self, X):
         X = self.encoder_1(X)
         X = torch.relu(X)
         X = self.encoder_2(X)
-        return torch.tanh(X)
+        X = torch.tanh(X)
+        return X
+
+    def Fnorm(self, h):
+        return torch.norm(h, p=2)
 
     def forward(self, X):
+        # print(X.shape[2])
         assert X.shape[2] == self.length, "trajectory length does not fit the network structure"
         if self.double_pre:
+<<<<<<< HEAD
             X = X.double()
         if device == 'cuda:0':
             X = X.cuda()
+=======
+            X = X.double().cuda()
+        else:
+            X = X.float().cuda()
+>>>>>>> 42edec2714c7461aa0e4a2e76d6ca845083528a9
 
         result = 0.
-
+        norm = 0.
         for i in range(self.length):
             if i == 0:
                 tmp = self.init_w
             else:
                 tmp = torch.einsum("nd, ni, idj -> nj", self.encoding(X[:, :, i-1]), tmp, self.core_list[i-1])
-            # print(result, self.phi(X, tmp).shape)
             tmp_result = self.phi(X[:, :, i].squeeze(), tmp)
-            # print(i, tmp_result)
+            norm += self.Fnorm(tmp)
             result = result + tmp_result
-        return torch.exp(result)
+        return result, norm
+
+
 
 
 
     def negative_log_likelihood(self, X):
-        log_likelihood = torch.mean(torch.log(self(X)))
+        log_likelihood, hidden_norm = self(X)
+        log_likelihood = torch.mean(log_likelihood)
+        # hidden_norm = torch.mean(hidden_norm)
         sum_trace = 0.
         for i in range(1, self.length):
             for j in range(self.core_list[i].shape[1]):
-                sum_trace += torch.sqrt(torch.trace(self.core_list[i][:, j, :]) ** 2)
-        # print(self(X))
-        return -log_likelihood+sum_trace
+                s = torch.linalg.svdvals(self.core_list[i][:, j, :])
+                sum_trace += s[0]
+        return -log_likelihood
 
     def fit(self,train_x, test_x, train_loader, validation_loader, epochs, optimizer, scheduler = None, verbose = True):
         train_likehood = []
@@ -210,19 +193,13 @@ class hankel_density(nn.Module):
             if scheduler is not None:
                 scheduler.step(-validation_likelihood[-1])
 
-            # if epoch >3:
-            #     if train_likehood[-1] - train_likehood[-2] > train_likehood[-2] - train_likehood[-3] and train_likehood[-1] - train_likehood[-2]>0:
-            #         count += 1
-            #
-            # if count > 2: break
-
         self.core_list[0] = nn.Parameter(torch.einsum('ij, jkl -> kl', self.init_w, self.core_list[0]).squeeze())
         return train_likehood, validation_likelihood
 
     def eval_likelihood(self, X):
         # print(X)
-        likelihood = (self(X)) #sum_to_one
-        return torch.mean(torch.log(likelihood))
+        log_likelihood, hidden_norm = self(X)
+        return torch.mean(log_likelihood)
 
 
 
@@ -242,6 +219,7 @@ def insert_bias(X):
     bias = torch.ones([X.shape[0], 1, X.shape[2]])
     X_bias = torch.cat((X, bias), 1)
     return X_bias
+
 
 if __name__ == "__main__":
     N = 10000
