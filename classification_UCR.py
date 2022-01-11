@@ -7,17 +7,31 @@ if __name__ == '__main__':
     exp_folder = './UCRArchive_2018/Adiac/'
 
     test = np.genfromtxt(exp_folder + 'Adiac_TEST.tsv', delimiter='\t')
+    train = np.genfromtxt(exp_folder + 'Adiac_TRAIN.tsv', delimiter='\t')
     test = labelize(test, tensorize=True)
+    train = labelize(train, tensorize=True)
 
-    class_idx_list = [2, 15]
+
+
+    class_idx_list = [3, 4, 6, 7, 8, 9, 10, 11, 12, 14, 17, 23, 25, 26, 29, 34, 36]
+
+    priors = {}
+    total_num_examples = 0.
+    for class_key in class_idx_list:
+        total_num_examples += len(train[class_key])
+        priors[class_key] = len(train[class_key])
+    for class_key in class_idx_list:
+        priors[class_key] = priors[class_key]/total_num_examples
+    print(priors)
 
     test_likelihood = {}
     for class_key in class_idx_list:
         for model_key in class_idx_list:
+            # print(model_key)
             outfile = open(exp_folder + 'density_wfa_finetune' + str(model_key), 'rb')
             dwfa_finetune = pickle.load(outfile)
             outfile.close()
-            likelihood = dwfa_finetune.eval_likelihood(test[class_key])
+            likelihood = dwfa_finetune.eval_likelihood(test[class_key]) * priors[class_key]
             if class_key not in test_likelihood:
                 test_likelihood[class_key] = {}
             test_likelihood[class_key][model_key] = likelihood
