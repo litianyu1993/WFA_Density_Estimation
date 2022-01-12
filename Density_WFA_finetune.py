@@ -12,6 +12,7 @@ from matplotlib import pyplot as plt
 from gradient_descent import *
 from Density_WFA import density_wfa
 from torch.nn.utils.parametrizations import spectral_norm
+
 class density_wfa_finetune(nn.Module):
 
     def __init__(self, density_wfa, device = device, double_pre = True):
@@ -162,14 +163,13 @@ class density_wfa_finetune(nn.Module):
         log_likelihood, hidden_norm = self(X)
         log_likelihood = torch.mean(log_likelihood)
         hidden_norm = torch.mean(hidden_norm)
-        # sum_trace = 0.
-        # for j in range(self.A.shape[1]):
-        #     u, s, v = torch.svd(self.A[:, j, :])
-        #     sum_trace += s[0] ** 2
 
-        # print(self(X))
-        # print(hidden_norm)
-        return -log_likelihood
+        sum_trace = 0.
+        for j in range(model.A.shape[1]):
+            u, s, v = torch.svd(model.A[:, j, :])
+            sum_trace += s[0] ** 2
+
+        return -log_likelihood + sum_trace
 
 
 

@@ -14,6 +14,7 @@ def train(model, device, train_loader, optimizer, X, loss_function = F.mse_loss,
         x = x.to(device)
         optimizer.zero_grad()
 
+
         loss = model.negative_log_likelihood(x)
 
         loss.backward()
