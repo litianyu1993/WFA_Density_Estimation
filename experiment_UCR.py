@@ -4,6 +4,7 @@ import numpy as np
 import pickle
 import time
 import os
+from flows import FlowDensityEstimator
 
 def sliding_window(X, window_size = 5):
     final_data = []
@@ -33,12 +34,14 @@ def labelize(X, tensorize = True):
 
 
 if __name__ == '__main__':
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     load = False
     load_WFA = False
     data_label = [['train_l', 'test_l'], ['train_2l', 'test_2l'], ['train_2l1', 'test_2l1']]
     validation_split = 0.8
     l = 4  # length in trianning (l, 2l, 2l+1)
     Ls = [l, 2 * l, 2 * l + 1]
+    baseline = 'realnvp'
 
 
     model_params = {
@@ -46,7 +49,7 @@ if __name__ == '__main__':
         'xd': 1,
         'r': 20,
         'lr': 0.001,
-        'epochs': 200,
+        'epochs': 100,
         'fine_tune_epochs': 20,
         'fine_tune_lr':0.001,
         'batch_size': 256,
@@ -55,8 +58,9 @@ if __name__ == '__main__':
 
     model_params['mixture_n'] = model_params['r']
 
-    exp_name = str(model_params)
-    exp_folder = os.path.join('results','UCR_Adiac',exp_name)
+    exp_folder = os.path.join('results','UCR_Adiac')
+    if not os.path.isdir(exp_folder):
+        os.makedirs(exp_folder)
 
     train = np.genfromtxt(os.path.join('.', 'data', 'UCR_Adiac', 'Adiac_TRAIN.tsv'), delimiter='\t')
     test = np.genfromtxt(os.path.join('.', 'data', 'UCR_Adiac', 'Adiac_TEST.tsv'), delimiter='\t')
@@ -81,16 +85,21 @@ if __name__ == '__main__':
                 # print(train_x.shape, vali_x.shape)
                 DATA[data_label[k][0]] = train_x
                 DATA[data_label[k][1]] = vali_x
+            if baseline is not None:
+                flow = FlowDensityEstimator(baseline, num_inputs=DATA['train_2l1'].shape[-1], num_hidden=64, num_blocks=5, num_cond_inputs=None, act='relu', device=device)
+                train_loss = flow.train(DATA, batch_size=model_params['batch_size'], epochs=model_params['epochs'])
 
-            out_file_name = exp_folder + 'density_wfa'+str(key)
+                out_file_name = os.path.join(exp_folder, baseline+'_'+str(key)+'.pth')
+                torch.save(flow.state_dict(), out_file_name)
+
+            out_file_name = os.path.join(exp_folder, 'densityWFA_'+str(key))
             dwfa_finetune = learn_density_WFA(DATA, model_params, l, out_file_name = out_file_name, load_WFA = load_WFA)
 
-
-            outfile = open(exp_folder + 'density_wfa_finetune'+str(key), 'wb')
+            outfile = open(os.path.join(exp_folder, 'densityWFA_finetune'+str(key)), 'wb')
             pickle.dump(dwfa_finetune, outfile)
             outfile.close()
         else:
-            outfile = open(exp_folder + 'density_wfa_finetune' + str(key), 'rb')
+            outfile = open(os.path.join(exp_folder, 'densityWFA_finetune'+str(key)), 'rb')
             dwfa_finetune = pickle.load(outfile)
             outfile.close()
         test_likelihood = {}
@@ -106,11 +115,3 @@ if __name__ == '__main__':
             print(str(key2)+' class average log likelihood')
             print(torch.mean(likelihood))
             print(torch.std(likelihood))
-        # outfile = open(exp_folder + 'density_wfa' + str(key)+'test_likelihood'+'model', 'wb')
-        # pickle.dump(test_likelihood, outfile)
-        # outfile.close()
-
-
-            # DATA[data_label[k][0]] = train_x
-            # DATA[data_label[k][1]] = test_x
-

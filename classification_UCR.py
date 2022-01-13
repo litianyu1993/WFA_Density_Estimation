@@ -2,16 +2,17 @@ import numpy as np
 import torch
 from experiment_UCR import  labelize
 import pickle
+import os
+from flows import FlowDensityEstimator
 
 if __name__ == '__main__':
-    exp_folder = './UCRArchive_2018/Adiac/'
 
-    test = np.genfromtxt(exp_folder + 'Adiac_TEST.tsv', delimiter='\t')
-    train = np.genfromtxt(exp_folder + 'Adiac_TRAIN.tsv', delimiter='\t')
+    test = np.genfromtxt(os.path.join('.', 'data', 'UCR_Adiac', 'Adiac_TEST.tsv'), delimiter='\t')
+    train = np.genfromtxt(os.path.join('.', 'data', 'UCR_Adiac', 'Adiac_TRAIN.tsv'), delimiter='\t')
     test = labelize(test, tensorize=True)
     train = labelize(train, tensorize=True)
 
-
+    baseline = 'realnvp'
 
     class_idx_list = [3, 4, 6, 7, 8, 9, 10, 11, 12, 14, 17, 23, 25, 26, 29, 34, 36]
 
@@ -22,13 +23,15 @@ if __name__ == '__main__':
         priors[class_key] = len(train[class_key])
     for class_key in class_idx_list:
         priors[class_key] = priors[class_key]/total_num_examples
-    print(priors)
 
     test_likelihood = {}
     for class_key in class_idx_list:
         for model_key in class_idx_list:
-            # print(model_key)
-            outfile = open(exp_folder + 'density_wfa_finetune' + str(model_key), 'rb')
+            if baseline is not None:
+                flow = FlowDensityEstimator(baseline, num_inputs=9, num_hidden=64, num_blocks=5, num_cond_inputs=None, act='relu', device='cpu')
+
+                import ipdb;ipdb.set_trace()
+            outfile = open(os.path.join('results','UCR_Adiac','density_wfa_finetune',str(model_key)), 'rb')
             dwfa_finetune = pickle.load(outfile)
             outfile.close()
             likelihood = dwfa_finetune.eval_likelihood(test[class_key]) * priors[class_key]
