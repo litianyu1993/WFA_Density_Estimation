@@ -79,8 +79,8 @@ class FlowDensityEstimator(nn.Module):
     def train(self, data, batch_size=128, epochs=10):
         self.model.train()
         # n_samples x T x n_d
-        train_data = data['train_2l1'].permute(0, 2, 1).float()[:, 0]
-        test_data = data['test_2l1'].permute(0, 2, 1).float()[:, 0]
+        train_data = data['train'].float()[:, 0]
+        test_data = data['test'].float()[:, 0]
         
         for e in range(epochs):
             train_loss = 0.
@@ -99,8 +99,8 @@ class FlowDensityEstimator(nn.Module):
 
             train_loss = train_loss / n_batches
             validation_loss = -self.model.log_probs(test_data, cond_data).mean()
-            print('Epoch: %d Train Likelihood: %f Validate Likelihood: %f'%(e, -train_loss, -validation_loss))
-        return train_loss
+            # print('Epoch: %d Train Likelihood: %f Validate Likelihood: %f'%(e, -train_loss, -validation_loss))
+        return train_loss, validation_loss
 
 def get_mask(in_features, out_features, in_flow_features, mask_type=None):
     """

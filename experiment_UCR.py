@@ -41,7 +41,7 @@ if __name__ == '__main__':
     validation_split = 0.8
     l = 4  # length in trianning (l, 2l, 2l+1)
     Ls = [l, 2 * l, 2 * l + 1]
-    baseline = 'realnvp'
+    baseline = None
 
 
     model_params = {
@@ -89,8 +89,8 @@ if __name__ == '__main__':
                 flow = FlowDensityEstimator(baseline, num_inputs=DATA['train_2l1'].shape[-1], num_hidden=64, num_blocks=5, num_cond_inputs=None, act='relu', device=device)
                 train_loss = flow.train(DATA, batch_size=model_params['batch_size'], epochs=model_params['epochs'])
 
-                out_file_name = os.path.join(exp_folder, baseline+'_'+str(key)+'.pth')
-                torch.save(flow.state_dict(), out_file_name)
+                # out_file_name = os.path.join(exp_folder, baseline+'_'+str(key)+'.pth')
+                # torch.save(flow.state_dict(), out_file_name)
 
             out_file_name = os.path.join(exp_folder, 'densityWFA_'+str(key))
             dwfa_finetune = learn_density_WFA(DATA, model_params, l, out_file_name = out_file_name, load_WFA = load_WFA)

@@ -24,13 +24,17 @@ if __name__ == '__main__':
     for class_key in class_idx_list:
         priors[class_key] = priors[class_key]/total_num_examples
 
+    if baseline is not None:
+        for class_key in class_idx_list:
+            flow = FlowDensityEstimator(baseline, num_inputs=train[class_key].shape[-1], num_hidden=64, num_blocks=5, num_cond_inputs=None, act='relu', device='cpu')
+            train_lik, test_lik = flow.train({'train': train[class_key], 'test': test[class_key] }, batch_size=train[class_key].shape[0], epochs=50)
+            train_lik = train_lik * priors[class_key]
+            test_lik = test_lik * priors[class_key]
+            print('[%d] Train: %f Test: %f'%(class_key, -train_lik, -test_lik))
+    exit()
     test_likelihood = {}
     for class_key in class_idx_list:
         for model_key in class_idx_list:
-            if baseline is not None:
-                flow = FlowDensityEstimator(baseline, num_inputs=9, num_hidden=64, num_blocks=5, num_cond_inputs=None, act='relu', device='cpu')
-
-                import ipdb;ipdb.set_trace()
             outfile = open(os.path.join('results','UCR_Adiac','density_wfa_finetune',str(model_key)), 'rb')
             dwfa_finetune = pickle.load(outfile)
             outfile.close()
