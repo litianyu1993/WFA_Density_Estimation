@@ -93,7 +93,7 @@ if __name__ == '__main__':
                 # torch.save(flow.state_dict(), out_file_name)
 
             out_file_name = os.path.join(exp_folder, 'densityWFA_'+str(key))
-            dwfa_finetune = learn_density_WFA(DATA, model_params, l, out_file_name = out_file_name, load_WFA = load_WFA)
+            dwfa_finetune = learn_density_WFA(DATA, model_params, l, out_file_name = out_file_name, load_WFA = load_WFA, plot=False)
 
             outfile = open(os.path.join(exp_folder, 'densityWFA_finetune'+str(key)), 'wb')
             pickle.dump(dwfa_finetune, outfile)

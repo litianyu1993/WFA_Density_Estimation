@@ -13,6 +13,8 @@ from gradient_descent import *
 from Density_WFA import density_wfa
 from torch.nn.utils.parametrizations import spectral_norm
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
 class density_wfa_finetune(nn.Module):
 
     def __init__(self, density_wfa, device = device, double_pre = True):
@@ -43,9 +45,11 @@ class density_wfa_finetune(nn.Module):
         self.init_w = density_wfa.init_w.requires_grad_(True)
         self.double_pre = double_pre
         if double_pre:
-            self.double().cuda()
+            self.double()
         else:
-            self.float().cuda()
+            self.float()
+        if device == 'cuda':
+            self.cuda()
 
     def encoding(self, X):
         X = self.encoder_1(X)
@@ -77,11 +81,12 @@ class density_wfa_finetune(nn.Module):
 
 
     def forward(self, X):
-
-        if self.double_pre:
-            X = X.double().cuda()
+        if double_pre:
+            X = X.double()
         else:
-            X = X.float().cuda()
+            X = X.float()
+        if device == 'cuda':
+            X = X.cuda()
 
         result = 0.
         norm = 0.

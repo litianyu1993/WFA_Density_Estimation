@@ -9,6 +9,9 @@ import pickle
 import torch.distributions as D
 from torch.distributions import Normal, mixture_same_family
 from matplotlib import pyplot as plt
+
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
 class density_wfa(nn.Module):
 
     def __init__(self, hd, h2d, h2d1, init_std = 0.1, device = device, double_pre = False):
@@ -36,9 +39,11 @@ class density_wfa(nn.Module):
         self.init_w, self.A, self.scale = self.spectral_learning()
         self.double_pre = double_pre
         if double_pre:
-            self.double().cuda()
+            self.double()
         else:
-            self.float().cuda()
+            self.float()
+        if device == 'cuda':
+            self.cuda()
 
     def encoding(self, X):
         X = self.encoder_1(X)
@@ -48,9 +53,11 @@ class density_wfa(nn.Module):
 
     def forward(self, X):
         if self.double_pre:
-            X = X.double().cuda()
+            X = X.double()
         else:
-            X = X.float().cuda()
+            X = X.float()
+        if device == 'cuda':
+            X = X.cuda()
 
         result = 0.
 
