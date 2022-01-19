@@ -28,8 +28,8 @@ if __name__ == '__main__':
         for class_key in class_idx_list:
             flow = FlowDensityEstimator(baseline, num_inputs=train[class_key].shape[-1], num_hidden=64, num_blocks=5, num_cond_inputs=None, act='relu', device='cpu')
             train_lik, test_lik = flow.train({'train': train[class_key], 'test': test[class_key] }, batch_size=train[class_key].shape[0], epochs=50)
-            train_lik = train_lik * priors[class_key]
-            test_lik = test_lik * priors[class_key]
+            train_lik = train_lik #* priors[class_key]
+            test_lik = test_lik #* priors[class_key]
             print('[%d] Train: %f Test: %f'%(class_key, -train_lik, -test_lik))
     exit()
     test_likelihood = {}

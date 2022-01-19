@@ -12,6 +12,7 @@ from matplotlib import pyplot as plt
 from gradient_descent import *
 from Density_WFA import density_wfa
 from torch.nn.utils.parametrizations import spectral_norm
+from flows import FlowDensityEstimator
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -81,7 +82,7 @@ class density_wfa_finetune(nn.Module):
 
 
     def forward(self, X):
-        if double_pre:
+        if self.double_pre:
             X = X.double()
         else:
             X = X.float()
@@ -169,12 +170,12 @@ class density_wfa_finetune(nn.Module):
         log_likelihood = torch.mean(log_likelihood)
         hidden_norm = torch.mean(hidden_norm)
 
-        sum_trace = 0.
-        for j in range(model.A.shape[1]):
-            u, s, v = torch.svd(model.A[:, j, :])
-            sum_trace += s[0] ** 2
+        # sum_trace = 0.
+        # for j in range(model.A.shape[1]):
+        #     u, s, v = torch.svd(model.A[:, j, :])
+        #     sum_trace += s[0] ** 2
 
-        return -log_likelihood + sum_trace
+        return -log_likelihood #+ sum_trace
 
 
 
@@ -317,7 +318,7 @@ if __name__ == '__main__':
         DATA[data_label[k][1]] = test_x
 
 
-    dwfa_finetune = learn_density_WFA(DATA, model_params, l)
+    dwfa_finetune = learn_density_WFA(DATA, model_params, l, plot=False)
 
 
     ls = [3, 4, 5, 6, 7, 8, 9, 10]
@@ -331,8 +332,10 @@ if __name__ == '__main__':
         train_x = torch.tensor(train_x).float()
 
         likelihood = dwfa_finetune.eval_likelihood(train_x)
+        flow = FlowDensityEstimator('realnvp', num_inputs=train_x.shape[-1], num_hidden=64, num_blocks=5, num_cond_inputs=None, act='relu', device='cpu')
+        train_lik, test_lik = flow.train({'train': train_x, 'test': train_x }, batch_size=train_x.shape[0], epochs=50)
         print("Length" + str(2 * l) + "result is:")
-        print("Model output: "+str(torch.mean(likelihood)) + "Ground truth: " + str( train_ground_truth))
+        print("Model output: "+str(torch.mean(likelihood).detach().cpu().item()) + " RealNVP: " + str(-train_lik) + " Ground truth: " + str( train_ground_truth))
 
 
 
