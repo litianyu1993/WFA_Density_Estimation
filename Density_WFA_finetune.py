@@ -51,8 +51,23 @@ class density_wfa_finetune(nn.Module):
             if i == 0:
                 tmp = self.init_w
             else:
+<<<<<<< Updated upstream
                 tmp = torch.einsum("nd, ni, idj -> nj", self.encoding(X[:, :, i - 1]), tmp, self.A)
             tmp_result = self.phi(X[:, :, i].squeeze(), tmp)
+=======
+                tmp = torch.einsum("nd, ni, idj -> nj", self.encoding(X[:, :, i-1]), tmp, self.A)
+
+
+            norm += self.Fnorm(tmp)
+            # print(self.scale_not_learnable, self.scale_not_learnable)
+            # scale = self.scale ** i
+            # scaled_tmp = scale * tmp
+            # print(scale)
+            # print(scale*tmp)
+            # print(tmp)
+            tmp_result = self.phi(X[:, :, i].squeeze(), tmp)
+
+>>>>>>> Stashed changes
             result = result + tmp_result
         return torch.exp(result)
 
