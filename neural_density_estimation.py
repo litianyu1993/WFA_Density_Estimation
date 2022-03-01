@@ -69,20 +69,12 @@ class hankel_density(nn.Module):
         # print(nade_hid)
         # if
         if previous_hd is None:
-<<<<<<< Updated upstream
-            self.mu_out = torch.nn.Linear(self.nade_hid[-1], mixture_number*xd, bias=True)
-            self.sig_out= torch.nn.Linear(self.nade_hid[-1], mixture_number*(xd**2), bias=True)
-            self.alpha_out = torch.nn.Linear(self.nade_hid[-1], mixture_number*xd, bias=True)
-=======
             self.mu_out = torch.nn.Linear(self.nade_hid[-1], mixture_number, bias=True)
             self.sig_out = torch.nn.Linear(self.nade_hid[-1], mixture_number, bias=True)
             self.alpha_out = torch.nn.Linear(self.nade_hid[-1], mixture_number, bias=True)
->>>>>>> Stashed changes
 
             self.encoder_1 = torch.nn.Linear(xd, self.encoder_hid[0], bias=True)
             self.encoder_2 = torch.nn.Linear(self.encoder_hid[0], d, bias=True)
-
-            # self.encoder_bn = torch.nn.BatchNorm1d(d)
 
         else:
             self.mu_out = previous_hd.mu_out
@@ -104,67 +96,6 @@ class hankel_density(nn.Module):
             self.encoder_2.weight.requires_grad = False
             self.encoder_2.bias.requires_grad = False
 
-<<<<<<< Updated upstream
-            # self.encoder_bn = previous_hd.encoder_bn
-            # self.encoder_bn.weight.requires_grad = False
-            # self.encoder_bn.bias.requires_grad = False
-
-
-        self.double_pre = double_pre
-        if double_pre:
-<<<<<<< HEAD
-            self.double()
-        if device == 'cuda:0':
-            self.cuda()
-=======
-            self.double().cuda()
-        else:
-            self.float().cuda()
->>>>>>> 42edec2714c7461aa0e4a2e76d6ca845083528a9
-
-    def torch_mixture_gaussian(self, X, mu, sig, alpha):
-        mix = D.Categorical(alpha)
-        comp = D.Normal(mu, sig)
-        gmm = mixture_same_family.MixtureSameFamily(mix, comp)
-        return gmm.log_prob(X)
-
-    def phi(self, X, h):
-        # print(h.shape)
-        h = torch.tanh(h)
-        for i in range(len(self.nade_layers)):
-            h = self.nade_layers[i](h)
-            h = torch.relu(h)
-        mu = self.mu_out(h)
-        sig = torch.exp(self.sig_out(h))
-        alpha = torch.softmax(self.alpha_out(h), dim = 1)
-        return self.torch_mixture_gaussian(X, mu, sig, alpha)
-
-
-
-    def encoding(self, X):
-        X = self.encoder_1(X)
-        X = torch.relu(X)
-        X = self.encoder_2(X)
-        X = torch.tanh(X)
-        return X
-
-    def Fnorm(self, h):
-        return torch.norm(h, p=2)
-
-    def forward(self, X):
-        # print(X.shape[2])
-        assert X.shape[2] == self.length, "trajectory length does not fit the network structure"
-        if self.double_pre:
-<<<<<<< HEAD
-            X = X.double()
-        if device == 'cuda:0':
-            X = X.cuda()
-=======
-            X = X.double().cuda()
-        else:
-            X = X.float().cuda()
->>>>>>> 42edec2714c7461aa0e4a2e76d6ca845083528a9
-=======
         self.double_pre = double_pre
         if double_pre:
             self.double().to(device)
@@ -179,7 +110,6 @@ class hankel_density(nn.Module):
             X = X.double().to(device)
         else:
             X = X.float().to(device)
->>>>>>> Stashed changes
 
         result = 0.
         norm = 0.
@@ -189,30 +119,6 @@ class hankel_density(nn.Module):
                 tmp = self.init_w
                 # print(tmp.shape)
             else:
-<<<<<<< Updated upstream
-                tmp = torch.einsum("nd, ni, idj -> nj", self.encoding(X[:, :, i-1]), tmp, self.core_list[i-1])
-            tmp_result = self.phi(X[:, :, i].squeeze(), tmp)
-            norm += self.Fnorm(tmp)
-            result = result + tmp_result
-        return result, norm
-
-
-
-
-
-    def negative_log_likelihood(self, X):
-        log_likelihood, hidden_norm = self(X)
-        log_likelihood = torch.mean(log_likelihood)
-        # hidden_norm = torch.mean(hidden_norm)
-        sum_trace = 0.
-        for i in range(1, self.length):
-            for j in range(self.core_list[i].shape[1]):
-                s = torch.linalg.svdvals(self.core_list[i][:, j, :])
-                sum_trace += s[0]
-        return -log_likelihood
-
-    def fit(self,train_x, test_x, train_loader, validation_loader, epochs, optimizer, scheduler = None, verbose = True):
-=======
                 # print(i, tmp.shape, self.core_list[i - 1].shape, self.core_list[0 ].shape)
                 tmp = torch.einsum("nd, ni, idj -> nj", encoding(self, X[:, :, i - 1]), tmp, self.core_list[i - 1])
             tmp_result = phi(self, X[:, :, i].squeeze(), tmp)
@@ -222,7 +128,6 @@ class hankel_density(nn.Module):
 
 
     def fit(self, train_x, test_x, train_loader, validation_loader, epochs, optimizer, scheduler=None, verbose=True):
->>>>>>> Stashed changes
         train_likehood = []
         validation_likelihood = []
         count = 0
@@ -235,17 +140,12 @@ class hankel_density(nn.Module):
                     validation_likelihood[-1]))
             if scheduler is not None:
                 scheduler.step(-validation_likelihood[-1])
-<<<<<<< Updated upstream
-
-        self.core_list[0] = nn.Parameter(torch.einsum('ij, jkl -> kl', self.init_w, self.core_list[0]).squeeze())
-=======
         if not self.nn_transition and not self.GD_linear_transition:
             # print('here', self.nn_transition, self.GD_linear_transition, print(train_x.shape))
             if train_x.shape[1] == 1:
                 self.core_list[0] = nn.Parameter(torch.einsum('ij, jkl -> kl', self.init_w, self.core_list[0]))
             else:
                 self.core_list[0] = nn.Parameter(torch.einsum('ij, jkl -> kl', self.init_w, self.core_list[0]).squeeze())
->>>>>>> Stashed changes
         return train_likehood, validation_likelihood
 
     def eval_likelihood(self, X):
@@ -253,8 +153,6 @@ class hankel_density(nn.Module):
         log_likelihood, hidden_norm = self(X)
         return torch.mean(log_likelihood)
 
-<<<<<<< Updated upstream
-=======
     def lossfunc(self, X):
         log_likelihood, hidden_norm = self(X)
         log_likelihood = torch.mean(log_likelihood)
@@ -265,7 +163,6 @@ class hankel_density(nn.Module):
         #         sum_trace += torch.sqrt(torch.trace(self.core_list[i][:, j, :]) ** 2)
         # print(self(X))
         return -log_likelihood
->>>>>>> Stashed changes
 
 
 def ground_truth_hmm(X, hmmmodel):
