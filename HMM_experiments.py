@@ -142,7 +142,7 @@ if __name__ == '__main__':
         train_likeli, test_likeli = rnade_rnn.fit(train_x, test_x, train_loader, test_loader, lstm_epochs, optimizer,
                                                   scheduler=None,
                                                   verbose=True)
-        ls = np.arange(2, 10)
+        ls = np.arange(2, 100)
         results = {}
         results['exp_parameters'] = args
         for l in ls:
