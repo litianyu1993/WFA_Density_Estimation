@@ -14,6 +14,8 @@ class density_wfa(nn.Module):
     def __init__(self, hd, h2d, h2d1, init_std = 0.1, device = device, double_pre = False):
         super().__init__()
         self.l = len(hd.core_list)
+        for i in range(len(hd.core_list)):
+            print(hd.core_list[i].shape)
         self.d = hd.core_list[0].shape[0]
         self.r = hd.core_list[0].shape[1]
 
@@ -36,9 +38,13 @@ class density_wfa(nn.Module):
         self.init_w, self.A, self.scale = self.spectral_learning()
         self.double_pre = double_pre
         if double_pre:
-            self.double().cuda()
+            self.double().to(device)
         else:
+<<<<<<< Updated upstream
             self.float().cuda()
+=======
+            self.to(device)
+>>>>>>> Stashed changes
 
     def encoding(self, X):
         X = self.encoder_1(X)
@@ -48,9 +54,13 @@ class density_wfa(nn.Module):
 
     def forward(self, X):
         if self.double_pre:
-            X = X.double().cuda()
+            X = X.double().to(device)
         else:
+<<<<<<< Updated upstream
             X = X.float().cuda()
+=======
+            X = X.to(device)
+>>>>>>> Stashed changes
 
         result = 0.
 
@@ -80,6 +90,7 @@ class density_wfa(nn.Module):
         h2l = self.list_to_tensor(self.hankel_2l)
         h2l1 = self.list_to_tensor(self.hankel_2l1)
 
+        # print(h2l.shape)
         H2l = (h2l.reshape([self.d ** self.l, self.d ** self.l * self.r]))
         print(H2l)
         H_2l1 = (h2l1.reshape([self.d ** self.l, self.d, self.d ** self.l * self.r]))
@@ -217,10 +228,3 @@ if __name__ == '__main__':
         dwfa = density_wfa(hds[1], hds[2], hds[0], double_pre=double_precision)
         likelihood = dwfa(train_x)
         print(torch.mean(torch.log(likelihood)), train_ground_truth)
-
-
-
-
-
-
-

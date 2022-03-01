@@ -2,6 +2,7 @@ from Density_WFA_finetune import learn_density_WFA
 import torch
 import numpy as np
 import pickle
+from matplotlib import pyplot as plt
 import time
 
 def sliding_window(X, window_size = 5):
@@ -36,29 +37,37 @@ if __name__ == '__main__':
     load_WFA = False
     data_label = [['train_l', 'test_l'], ['train_2l', 'test_2l'], ['train_2l1', 'test_2l1']]
     validation_split = 0.8
-    l = 4  # length in trianning (l, 2l, 2l+1)
+    l = 10  # length in trianning (l, 2l, 2l+1)
     Ls = [l, 2 * l, 2 * l + 1]
+
 
 
     model_params = {
         'd': 5,
         'xd': 1,
-        'r': 20,
+        'r': 10,
         'lr': 0.001,
-        'epochs': 200,
-        'fine_tune_epochs': 20,
-        'fine_tune_lr':0.001,
+        'epochs': 1000,
+        'fine_tune_epochs': 100,
+        'fine_tune_lr':0.0005,
         'batch_size': 256,
-        'double_precision': True
+        'double_precision': False,
+        'singular_clip_interval': 10,
+        'verbose': True,
+        'nn_transition': False,
+        'GD_linear_transition': True
     }
+
+    singular_clip_interval = model_params['fine_tune_epochs'] + 1
 
     model_params['mixture_n'] = model_params['r']
 
     exp_name = str(model_params)
-    exp_folder = 'UCRArchive_2018/Adiac/'
+    folder_name = "Adiac"
+    exp_folder = 'UCRArchive_2018/' + folder_name+'/'
 
-    train = np.genfromtxt(exp_folder + 'Adiac_TRAIN.tsv', delimiter='\t')
-    test = np.genfromtxt(exp_folder + 'Adiac_TEST.tsv', delimiter='\t')
+    train = np.genfromtxt(exp_folder + folder_name + '_TRAIN.tsv', delimiter='\t')
+    test = np.genfromtxt(exp_folder + folder_name + '_TEST.tsv', delimiter='\t')
     test = labelize(test, tensorize=True)
 
     train_x_tmp = sliding_window(train)
@@ -70,9 +79,16 @@ if __name__ == '__main__':
             DATA = {}
             for k in range(len(Ls)):
                 L = Ls[k]
+                # l = train.shape[1]
+                # train_x_all = labelize(train, tensorize=True)
+
                 train_x_all = sliding_window(train, window_size=L)
                 np.random.shuffle(train_x_all)
                 train_x_all = labelize(train_x_all, tensorize=True)
+
+
+
+
                 train_x_current_class = train_x_all[key]
                 sep = int(validation_split * len(train_x_current_class))
                 train_x = train_x_current_class[:sep]
@@ -82,7 +98,7 @@ if __name__ == '__main__':
                 DATA[data_label[k][1]] = vali_x
 
             out_file_name = exp_folder + 'density_wfa'+str(key)
-            dwfa_finetune = learn_density_WFA(DATA, model_params, l, out_file_name = out_file_name, load_WFA = load_WFA)
+            dwfa_finetune = learn_density_WFA(DATA, model_params, l, out_file_name = out_file_name, load_WFA = load_WFA, singular_clip_interval = singular_clip_interval)
 
 
             outfile = open(exp_folder + 'density_wfa_finetune'+str(key), 'wb')
@@ -92,22 +108,43 @@ if __name__ == '__main__':
             outfile = open(exp_folder + 'density_wfa_finetune' + str(key), 'rb')
             dwfa_finetune = pickle.load(outfile)
             outfile.close()
-        test_likelihood = {}
-        # print(dwfa_finetune.get_transition_norm(), dwfa_finetune.scale)
-        for i in range(dwfa_finetune.A.shape[1]):
-            # u, s, v = torch.linalg.svd(A[:, i, :])
-            s = torch.linalg.svdvals(dwfa_finetune.A[:, i, :])
-        for key2 in train_x_tmp:
-            # if key == 21:
-            likelihood = dwfa_finetune.eval_likelihood(test[key2])
-            test_likelihood[key2] = likelihood
+
+        Ls = np.arange(20, 150)
+        results = []
+
+        for k in range(len(Ls)):
+            L = int(Ls[k])
+            # l = train.shape[1]
+            # train_x_all = labelize(train, tensorize=True)
+
+            train_x_all = sliding_window(train, window_size=L)
+            np.random.shuffle(train_x_all)
+            train_x_all = labelize(train_x_all, tensorize=True)
+
+            train_x_current_class = train_x_all[22]
+
+            likelihood = dwfa_finetune.eval_likelihood(train_x_current_class, batch=True)
             # print(likelihood)
-            print(str(key2)+' class average log likelihood')
+            print(str(k) + ' class average log likelihood')
             print(torch.mean(likelihood))
             print(torch.std(likelihood))
-        # outfile = open(exp_folder + 'density_wfa' + str(key)+'test_likelihood'+'model', 'wb')
-        # pickle.dump(test_likelihood, outfile)
-        # outfile.close()
+            results.append(torch.mean(likelihood).detach().cpu().numpy())
+        plt.plot(results)
+        plt.show()
+        exit()
+        test_likelihood = {}
+
+        for key in train_x_tmp:
+            # if key == 21:
+                likelihood = dwfa_finetune.eval_likelihood(test[key], batch=True)
+                test_likelihood[key] = likelihood
+                print(likelihood)
+                print(str(key)+' class average log likelihood')
+                print(torch.mean(likelihood))
+                print(torch.std(likelihood))
+        outfile = open(exp_folder + 'density_wfa' + str(key)+'test_likelihood', 'wb')
+        pickle.dump(test_likelihood, outfile)
+        outfile.close()
 
 
             # DATA[data_label[k][0]] = train_x
