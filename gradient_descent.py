@@ -29,8 +29,8 @@ def train(model, device, train_loader, optimizer, X, loss_function = F.mse_loss,
 
         # print(batch_idx, model.negative_log_likelihood(x))
         error.append(loss)
-    return torch.mean(model.eval_likelihood(X))
-
+    error = torch.tensor(error)
+    return torch.mean(error)
 
 def validate(model, device, validation_loader, X, loss_function = F.mse_loss):
     all_losses = []
@@ -40,7 +40,8 @@ def validate(model, device, validation_loader, X, loss_function = F.mse_loss):
             # test_loss = negative_log_likelihood(model, x)
             test_loss = model.lossfunc(x)
             all_losses.append(test_loss)
-    return  torch.mean(model.eval_likelihood(X))
 
+    all_losses = torch.tensor(all_losses)
+    return  torch.mean(all_losses)
 
 
