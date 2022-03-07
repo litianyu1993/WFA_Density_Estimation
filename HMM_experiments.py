@@ -88,9 +88,9 @@ if __name__ == '__main__':
         results = {}
         results['exp_parameters'] = args
         for l in ls:
-            train_x = np.zeros([N, xd, l])
+            train_x = np.zeros([1000, xd, l])
             # print(2*l)
-            for i in range(N):
+            for i in range(1000):
                 x, z = hmmmodel.sample(l)
                 train_x[i, :, :] = x.reshape(xd, -1)
             train_ground_truth = ground_truth_hmm(train_x, hmmmodel)
@@ -112,7 +112,7 @@ if __name__ == '__main__':
         l = 2*l+1
         default_parameters = {
             'input_size': 1,
-            'RNN_hidden_size': r**2,
+            'RNN_hidden_size': r,
             'RNN_num_layers': 1,
             'output_size': r,
             'mixture_number': r,
@@ -146,9 +146,9 @@ if __name__ == '__main__':
         results = {}
         results['exp_parameters'] = args
         for l in ls:
-            train_x = np.zeros([N, l, xd])
+            train_x = np.zeros([1000, l, xd])
             # print(2*l)
-            for i in range(N):
+            for i in range(1000):
                 x, z = hmmmodel.sample(l)
                 train_x[i, :, :] = x.reshape(-1, xd)
             train_ground_truth = ground_truth_hmm(train_x.swapaxes(1, 2), hmmmodel)

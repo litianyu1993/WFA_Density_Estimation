@@ -19,11 +19,11 @@ class RNADE_RNN(nn.Module):
         super().__init__()
         self.input_size = parameters['input_size']
         self.RNN_hidden_size = parameters['RNN_hidden_size']
-        self.RNN_num_layers = parameters['RNN_hidden_size']
+        self.RNN_num_layers = parameters['RNN_num_layers']
         self.output_size = parameters['output_size']
         self.device = parameters['device']
 
-        print(self.input_size)
+        print(self.input_size, self.RNN_hidden_size, self.RNN_num_layers)
         self.lstm = nn.LSTM(input_size=self.input_size, hidden_size=self.RNN_hidden_size, num_layers=self.RNN_num_layers, batch_first=True)
 
         # nade_hid = parameters['nade_hid']
@@ -89,7 +89,7 @@ if __name__ == '__main__':
     r = 10
     default_parameters = {
         'input_size': 1,
-        'RNN_hidden_size': r**2,
+        'RNN_hidden_size': r,
         'RNN_num_layers': 1,
         'output_size': r,
         'mixture_number': r,
@@ -98,7 +98,7 @@ if __name__ == '__main__':
 
     batch_size = 256
     lr  = 0.001
-    epochs = 100
+    epochs = 2
 
     N = 100
     xd = default_parameters['input_size']

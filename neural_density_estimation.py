@@ -162,7 +162,7 @@ class hankel_density(nn.Module):
         #     for j in range(self.core_list[i].shape[1]):
         #         sum_trace += torch.sqrt(torch.trace(self.core_list[i][:, j, :]) ** 2)
         # print(self(X))
-        return -log_likelihood
+        return -log_likelihood + hidden_norm
 
 
 def ground_truth_hmm(X, hmmmodel):

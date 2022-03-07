@@ -13,7 +13,7 @@ def encoding(model, X):
     return X
 
 def Fnorm(h):
-    norm =  torch.norm((h -1), p=2)
+    norm =  torch.norm((h), p=2)
     norm = torch.abs(norm)
     return norm
 
