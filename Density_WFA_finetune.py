@@ -146,7 +146,7 @@ class density_wfa_finetune(nn.Module):
         #     sum_trace+= s[0] * inte_phi[j]
         # print(sum_trace)
         # print(self(X))
-        return -log_likelihood
+        return -log_likelihood+ hidden_norm
 
 
 
