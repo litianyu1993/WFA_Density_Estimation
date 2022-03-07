@@ -103,7 +103,7 @@ if __name__ == '__main__':
             }
             print("Length" + str(l) + "result is:")
             print("Model output: " + str(torch.mean(likelihood)) + "Ground truth: " + str(train_ground_truth))
-            file_name = os.path.join(fileDir, 'hmm_models\\rank_' + str(r)+'exp\\'+exp_name)
+            file_name = os.path.join(fileDir, 'hmm_models','rank_'+str(r)+'exp',exp_name)
             with open(file_name, 'wb') as f:
                 pickle.dump(results, f)
 
@@ -157,7 +157,7 @@ if __name__ == '__main__':
             likelihood = -rnade_rnn.lossfunc(train_x)
             print("Length" + str(l) + "result is:")
             print("Model output: " + str(torch.mean(likelihood)) + "Ground truth: " + str(train_ground_truth))
-            file_name = os.path.join(fileDir, 'hmm_models\\rank_' + str(r) + 'exp\\' + exp_name)
+            file_name = os.path.join(fileDir, 'hmm_models','rank_' + str(r) + 'exp', exp_name)
             with open(file_name, 'wb') as f:
                 pickle.dump(results, f)
 
