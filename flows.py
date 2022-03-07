@@ -9,6 +9,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import optim
 
+from torch.distributions.multivariate_normal import MultivariateNormal
+from torch.utils.data import Dataset
+
+import tqdm
+import matplotlib.pyplot as plt
+
 class FlowDensityEstimator(nn.Module):
     def __init__(self, flow, num_inputs=1, num_hidden=64, num_blocks=1, num_cond_inputs=None, lr=3e-4, act='relu', device='cpu'):
         super(FlowDensityEstimator, self).__init__()
@@ -79,8 +85,8 @@ class FlowDensityEstimator(nn.Module):
     def train(self, data, batch_size=128, epochs=10):
         self.model.train()
         # n_samples x T x n_d
-        train_data = data['train'].float()[:, 0]
-        test_data = data['test'].float()[:, 0]
+        train_data = data['train'].float()
+        test_data = data['test'].float()
         
         for e in range(epochs):
             train_loss = 0.
@@ -123,476 +129,242 @@ def get_mask(in_features, out_features, in_flow_features, mask_type=None):
     return (out_degrees.unsqueeze(-1) >= in_degrees.unsqueeze(0)).float()
 
 
-class MaskedLinear(nn.Module):
-    def __init__(self,
-                 in_features,
-                 out_features,
-                 mask,
-                 cond_in_features=None,
-                 bias=True):
-        super(MaskedLinear, self).__init__()
-        self.linear = nn.Linear(in_features, out_features)
-        if cond_in_features is not None:
-            self.cond_linear = nn.Linear(
-                cond_in_features, out_features, bias=False)
-
-        self.register_buffer('mask', mask)
-
-    def forward(self, inputs, cond_inputs=None):
-        output = F.linear(inputs, self.linear.weight * self.mask,
-                          self.linear.bias)
-        if cond_inputs is not None:
-            output += self.cond_linear(cond_inputs)
-        return output
-
-
-nn.MaskedLinear = MaskedLinear
-
-
-class MADESplit(nn.Module):
-    """ An implementation of MADE
-    (https://arxiv.org/abs/1502.03509).
-    """
-
-    def __init__(self,
-                 num_inputs,
-                 num_hidden,
-                 num_cond_inputs=None,
-                 s_act='tanh',
-                 t_act='relu',
-                 pre_exp_tanh=False):
-        super(MADESplit, self).__init__()
-
-        self.pre_exp_tanh = pre_exp_tanh
-
-        activations = {'relu': nn.ReLU, 'sigmoid': nn.Sigmoid, 'tanh': nn.Tanh}
-
-        input_mask = get_mask(num_inputs, num_hidden, num_inputs,
-                              mask_type='input')
-        hidden_mask = get_mask(num_hidden, num_hidden, num_inputs)
-        output_mask = get_mask(num_hidden, num_inputs, num_inputs,
-                               mask_type='output')
-
-        act_func = activations[s_act]
-        self.s_joiner = nn.MaskedLinear(num_inputs, num_hidden, input_mask,
-                                      num_cond_inputs)
-
-        self.s_trunk = nn.Sequential(act_func(),
-                                   nn.MaskedLinear(num_hidden, num_hidden,
-                                                   hidden_mask), act_func(),
-                                   nn.MaskedLinear(num_hidden, num_inputs,
-                                                   output_mask))
-
-        act_func = activations[t_act]
-        self.t_joiner = nn.MaskedLinear(num_inputs, num_hidden, input_mask,
-                                      num_cond_inputs)
-
-        self.t_trunk = nn.Sequential(act_func(),
-                                   nn.MaskedLinear(num_hidden, num_hidden,
-                                                   hidden_mask), act_func(),
-                                   nn.MaskedLinear(num_hidden, num_inputs,
-                                                   output_mask))
-        
-    def forward(self, inputs, cond_inputs=None, mode='direct'):
-        if mode == 'direct':
-            h = self.s_joiner(inputs, cond_inputs)
-            m = self.s_trunk(h)
-            
-            h = self.t_joiner(inputs, cond_inputs)
-            a = self.t_trunk(h)
-
-            if self.pre_exp_tanh:
-                a = torch.tanh(a)
-            
-            u = (inputs - m) * torch.exp(-a)
-            return u, -a.sum(-1, keepdim=True)
-
-        else:
-            x = torch.zeros_like(inputs)
-            for i_col in range(inputs.shape[1]):
-                h = self.s_joiner(x, cond_inputs)
-                m = self.s_trunk(h)
-
-                h = self.t_joiner(x, cond_inputs)
-                a = self.t_trunk(h)
-
-                if self.pre_exp_tanh:
-                    a = torch.tanh(a)
-
-                x[:, i_col] = inputs[:, i_col] * torch.exp(
-                    a[:, i_col]) + m[:, i_col]
-            return x, -a.sum(-1, keepdim=True)
-
-class MADE(nn.Module):
-    """ An implementation of MADE
-    (https://arxiv.org/abs/1502.03509).
-    """
-
-    def __init__(self,
-                 num_inputs,
-                 num_hidden,
-                 num_cond_inputs=None,
-                 act='relu',
-                 pre_exp_tanh=False):
-        super(MADE, self).__init__()
-
-        activations = {'relu': nn.ReLU, 'sigmoid': nn.Sigmoid, 'tanh': nn.Tanh}
-        act_func = activations[act]
-
-        input_mask = get_mask(
-            num_inputs, num_hidden, num_inputs, mask_type='input')
-        hidden_mask = get_mask(num_hidden, num_hidden, num_inputs)
-        output_mask = get_mask(
-            num_hidden, num_inputs * 2, num_inputs, mask_type='output')
-
-        self.joiner = nn.MaskedLinear(num_inputs, num_hidden, input_mask,
-                                      num_cond_inputs)
-
-        self.trunk = nn.Sequential(act_func(),
-                                   nn.MaskedLinear(num_hidden, num_hidden,
-                                                   hidden_mask), act_func(),
-                                   nn.MaskedLinear(num_hidden, num_inputs * 2,
-                                                   output_mask))
-
-    def forward(self, inputs, cond_inputs=None, mode='direct'):
-        if mode == 'direct':
-            h = self.joiner(inputs, cond_inputs)
-            m, a = self.trunk(h).chunk(2, 1)
-            u = (inputs - m) * torch.exp(-a)
-            return u, -a.sum(-1, keepdim=True)
-
-        else:
-            x = torch.zeros_like(inputs)
-            for i_col in range(inputs.shape[1]):
-                h = self.joiner(x, cond_inputs)
-                m, a = self.trunk(h).chunk(2, 1)
-                x[:, i_col] = inputs[:, i_col] * torch.exp(
-                    a[:, i_col]) + m[:, i_col]
-            return x, -a.sum(-1, keepdim=True)
-
-
-class Sigmoid(nn.Module):
-    def __init__(self):
-        super(Sigmoid, self).__init__()
-
-    def forward(self, inputs, cond_inputs=None, mode='direct'):
-        if mode == 'direct':
-            s = torch.sigmoid
-            return s(inputs), torch.log(s(inputs) * (1 - s(inputs))).sum(
-                -1, keepdim=True)
-        else:
-            return torch.log(inputs /
-                             (1 - inputs)), -torch.log(inputs - inputs**2).sum(
-                                 -1, keepdim=True)
-
-
-class Logit(Sigmoid):
-    def __init__(self):
-        super(Logit, self).__init__()
-
-    def forward(self, inputs, cond_inputs=None, mode='direct'):
-        if mode == 'direct':
-            return super(Logit, self).forward(inputs, 'inverse')
-        else:
-            return super(Logit, self).forward(inputs, 'direct')
-
-
-class BatchNormFlow(nn.Module):
-    """ An implementation of a batch normalization layer from
-    Density estimation using Real NVP
-    (https://arxiv.org/abs/1605.08803).
-    """
-
-    def __init__(self, num_inputs, momentum=0.0, eps=1e-5):
-        super(BatchNormFlow, self).__init__()
-
-        self.log_gamma = nn.Parameter(torch.zeros(num_inputs))
-        self.beta = nn.Parameter(torch.zeros(num_inputs))
-        self.momentum = momentum
-        self.eps = eps
-
-        self.register_buffer('running_mean', torch.zeros(num_inputs))
-        self.register_buffer('running_var', torch.ones(num_inputs))
-
-    def forward(self, inputs, cond_inputs=None, mode='direct'):
-        if mode == 'direct':
-            if self.training:
-                self.batch_mean = inputs.mean(0)
-                self.batch_var = (
-                    inputs - self.batch_mean).pow(2).mean(0) + self.eps
-
-                self.running_mean.mul_(self.momentum)
-                self.running_var.mul_(self.momentum)
-
-                self.running_mean.add_(self.batch_mean.data *
-                                       (1 - self.momentum))
-                self.running_var.add_(self.batch_var.data *
-                                      (1 - self.momentum))
-
-                mean = self.batch_mean
-                var = self.batch_var
-            else:
-                mean = self.running_mean
-                var = self.running_var
-
-            x_hat = (inputs - mean) / var.sqrt()
-            y = torch.exp(self.log_gamma) * x_hat + self.beta
-            return y, (self.log_gamma - 0.5 * torch.log(var)).sum(
-                -1, keepdim=True)
-        else:
-            if self.training:
-                mean = self.batch_mean
-                var = self.batch_var
-            else:
-                mean = self.running_mean
-                var = self.running_var
-
-            x_hat = (inputs - self.beta) / torch.exp(self.log_gamma)
-
-            y = x_hat * var.sqrt() + mean
-
-            return y, (-self.log_gamma + 0.5 * torch.log(var)).sum(
-                -1, keepdim=True)
-
-
-class ActNorm(nn.Module):
-    """ An implementation of a activation normalization layer
-    from Glow: Generative Flow with Invertible 1x1 Convolutions
-    (https://arxiv.org/abs/1807.03039).
-    """
-
-    def __init__(self, num_inputs):
-        super(ActNorm, self).__init__()
-        self.weight = nn.Parameter(torch.ones(num_inputs))
-        self.bias = nn.Parameter(torch.zeros(num_inputs))
-        self.initialized = False
-
-    def forward(self, inputs, cond_inputs=None, mode='direct'):
-        if self.initialized == False:
-            self.weight.data.copy_(torch.log(1.0 / (inputs.std(0) + 1e-12)))
-            self.bias.data.copy_(inputs.mean(0))
-            self.initialized = True
-
-        if mode == 'direct':
-            return (
-                inputs - self.bias) * torch.exp(self.weight), self.weight.sum(
-                    -1, keepdim=True).unsqueeze(0).repeat(inputs.size(0), 1)
-        else:
-            return inputs * torch.exp(
-                -self.weight) + self.bias, -self.weight.sum(
-                    -1, keepdim=True).unsqueeze(0).repeat(inputs.size(0), 1)
-
-
-class InvertibleMM(nn.Module):
-    """ An implementation of a invertible matrix multiplication
-    layer from Glow: Generative Flow with Invertible 1x1 Convolutions
-    (https://arxiv.org/abs/1807.03039).
-    """
-
-    def __init__(self, num_inputs):
-        super(InvertibleMM, self).__init__()
-        self.W = nn.Parameter(torch.Tensor(num_inputs, num_inputs))
-        nn.init.orthogonal_(self.W)
-
-    def forward(self, inputs, cond_inputs=None, mode='direct'):
-        if mode == 'direct':
-            return inputs @ self.W, torch.slogdet(
-                self.W)[-1].unsqueeze(0).unsqueeze(0).repeat(
-                    inputs.size(0), 1)
-        else:
-            return inputs @ torch.inverse(self.W), -torch.slogdet(
-                self.W)[-1].unsqueeze(0).unsqueeze(0).repeat(
-                    inputs.size(0), 1)
-
-
-class LUInvertibleMM(nn.Module):
-    """ An implementation of a invertible matrix multiplication
-    layer from Glow: Generative Flow with Invertible 1x1 Convolutions
-    (https://arxiv.org/abs/1807.03039).
-    """
-
-    def __init__(self, num_inputs):
-        super(LUInvertibleMM, self).__init__()
-        self.W = torch.Tensor(num_inputs, num_inputs)
-        nn.init.orthogonal_(self.W)
-        self.L_mask = torch.tril(torch.ones(self.W.size()), -1)
-        self.U_mask = self.L_mask.t().clone()
-
-        P, L, U = sp.linalg.lu(self.W.numpy())
-        self.P = torch.from_numpy(P)
-        self.L = nn.Parameter(torch.from_numpy(L))
-        self.U = nn.Parameter(torch.from_numpy(U))
-
-        S = np.diag(U)
-        sign_S = np.sign(S)
-        log_S = np.log(abs(S))
-        self.sign_S = torch.from_numpy(sign_S)
-        self.log_S = nn.Parameter(torch.from_numpy(log_S))
-
-        self.I = torch.eye(self.L.size(0))
-
-    def forward(self, inputs, cond_inputs=None, mode='direct'):
-        if str(self.L_mask.device) != str(self.L.device):
-            self.L_mask = self.L_mask.to(self.L.device)
-            self.U_mask = self.U_mask.to(self.L.device)
-            self.I = self.I.to(self.L.device)
-            self.P = self.P.to(self.L.device)
-            self.sign_S = self.sign_S.to(self.L.device)
-
-        L = self.L * self.L_mask + self.I
-        U = self.U * self.U_mask + torch.diag(
-            self.sign_S * torch.exp(self.log_S))
-        W = self.P @ L @ U
-
-        if mode == 'direct':
-            return inputs @ W, self.log_S.sum().unsqueeze(0).unsqueeze(
-                0).repeat(inputs.size(0), 1)
-        else:
-            return inputs @ torch.inverse(
-                W), -self.log_S.sum().unsqueeze(0).unsqueeze(0).repeat(
-                    inputs.size(0), 1)
-
-
-class Shuffle(nn.Module):
-    """ An implementation of a shuffling layer from
-    Density estimation using Real NVP
-    (https://arxiv.org/abs/1605.08803).
-    """
-
-    def __init__(self, num_inputs):
-        super(Shuffle, self).__init__()
-        self.register_buffer("perm", torch.randperm(num_inputs))
-        self.register_buffer("inv_perm", torch.argsort(self.perm))
-
-    def forward(self, inputs, cond_inputs=None, mode='direct'):
-        if mode == 'direct':
-            return inputs[:, self.perm], torch.zeros(
-                inputs.size(0), 1, device=inputs.device)
-        else:
-            return inputs[:, self.inv_perm], torch.zeros(
-                inputs.size(0), 1, device=inputs.device)
-
-
-class Reverse(nn.Module):
-    """ An implementation of a reversing layer from
-    Density estimation using Real NVP
-    (https://arxiv.org/abs/1605.08803).
-    """
-
-    def __init__(self, num_inputs):
-        super(Reverse, self).__init__()
-        self.perm = np.array(np.arange(0, num_inputs)[::-1])
-        self.inv_perm = np.argsort(self.perm)
-
-    def forward(self, inputs, cond_inputs=None, mode='direct'):
-        if mode == 'direct':
-            return inputs[:, self.perm], torch.zeros(
-                inputs.size(0), 1, device=inputs.device)
-        else:
-            return inputs[:, self.inv_perm], torch.zeros(
-                inputs.size(0), 1, device=inputs.device)
-
-
-class CouplingLayer(nn.Module):
-    """ An implementation of a coupling layer
-    from RealNVP (https://arxiv.org/abs/1605.08803).
-    """
-
-    def __init__(self,
-                 num_inputs,
-                 num_hidden,
-                 mask,
-                 num_cond_inputs=None,
-                 s_act='tanh',
-                 t_act='relu'):
-        super(CouplingLayer, self).__init__()
-
-        self.num_inputs = num_inputs
-        self.mask = mask
-
-        activations = {'relu': nn.ReLU, 'sigmoid': nn.Sigmoid, 'tanh': nn.Tanh}
-        s_act_func = activations[s_act]
-        t_act_func = activations[t_act]
-
-        if num_cond_inputs is not None:
-            total_inputs = num_inputs + num_cond_inputs
-        else:
-            total_inputs = num_inputs
-            
-        self.scale_net = nn.Sequential(
-            nn.Linear(total_inputs, num_hidden), s_act_func(),
-            nn.Linear(num_hidden, num_hidden), s_act_func(),
-            nn.Linear(num_hidden, num_inputs))
-        self.translate_net = nn.Sequential(
-            nn.Linear(total_inputs, num_hidden), t_act_func(),
-            nn.Linear(num_hidden, num_hidden), t_act_func(),
-            nn.Linear(num_hidden, num_inputs))
-
-        def init(m):
-            if isinstance(m, nn.Linear):
-                m.bias.data.fill_(0)
-                nn.init.orthogonal_(m.weight.data)
-
-    def forward(self, inputs, cond_inputs=None, mode='direct'):
-        mask = self.mask
-        
-        masked_inputs = inputs * mask
-        if cond_inputs is not None:
-            masked_inputs = torch.cat([masked_inputs, cond_inputs], -1)
-        
-        if mode == 'direct':
-            log_s = self.scale_net(masked_inputs) * (1 - mask)
-            t = self.translate_net(masked_inputs) * (1 - mask)
-            s = torch.exp(log_s)
-            return inputs * s + t, log_s.sum(-1, keepdim=True)
-        else:
-            log_s = self.scale_net(masked_inputs) * (1 - mask)
-            t = self.translate_net(masked_inputs) * (1 - mask)
-            s = torch.exp(-log_s)
-            return (inputs - t) * s, -log_s.sum(-1, keepdim=True)
-
-
-class FlowSequential(nn.Sequential):
-    """ A sequential container for flows.
-    In addition to a forward pass it implements a backward pass and
-    computes log jacobians.
-    """
-
-    def forward(self, inputs, cond_inputs=None, mode='direct', logdets=None):
-        """ Performs a forward or backward pass for flow modules.
-        Args:
-            inputs: a tuple of inputs and logdets
-            mode: to run direct computation or inverse
-        """
-        self.num_inputs = inputs.size(-1)
-
-        if logdets is None:
-            logdets = torch.zeros(inputs.size(0), 1, device=inputs.device)
-
-        assert mode in ['direct', 'inverse']
-        if mode == 'direct':
-            for module in self._modules.values():
-                inputs, logdet = module(inputs, cond_inputs, mode)
-                logdets += logdet
-        else:
-            for module in reversed(self._modules.values()):
-                inputs, logdet = module(inputs, cond_inputs, mode)
-                logdets += logdet
-
-        return inputs, logdets
-
-    def log_probs(self, inputs, cond_inputs = None):
-        u, log_jacob = self(inputs, cond_inputs)
-        log_probs = (-0.5 * u.pow(2) - 0.5 * math.log(2 * math.pi)).sum(
-            -1, keepdim=True)
-        return (log_probs + log_jacob).sum(-1, keepdim=True)
-
-    def sample(self, num_samples=None, noise=None, cond_inputs=None):
-        if noise is None:
-            noise = torch.Tensor(num_samples, self.num_inputs).normal_()
-        device = next(self.parameters()).device
-        noise = noise.to(device)
-        if cond_inputs is not None:
-            cond_inputs = cond_inputs.to(device)
-        samples = self.forward(noise, cond_inputs, mode='inverse')[0]
+class SimpleAffine(nn.Module):
+    def __init__(self, dim=2):
+        super().__init__()
+        self.dim = dim
+        self.a = nn.Parameter(torch.zeros(self.dim))  # log_scale
+        self.b = nn.Parameter(torch.zeros(self.dim))  # shift
+
+    def forward(self, x):
+        y = torch.exp(self.a) * x + self.b
+
+        det_jac = torch.exp(self.a.sum())
+        log_det_jac = torch.ones(y.shape[0]) * torch.log(det_jac)
+
+        return y, log_det_jac
+
+    def inverse(self, y):
+        x = (y - self.b) / torch.exp(self.a)
+
+        det_jac = 1 / torch.exp(self.a.sum())
+        inv_log_det_jac = torch.ones(y.shape[0]) * torch.log(det_jac)
+
+        return x, inv_log_det_jac
+
+
+class StackSimpleAffine(nn.Module):
+    def __init__(self, transforms, dim=2):
+        super().__init__()
+        self.dim = dim
+        self.transforms = nn.ModuleList(transforms)
+        self.distribution = MultivariateNormal(torch.zeros(self.dim), torch.eye(self.dim))
+
+    def log_probability(self, x):
+        log_prob = torch.zeros(x.shape[0])
+        for transform in reversed(self.transforms):
+            x, inv_log_det_jac = transform.inverse(x)
+            log_prob += inv_log_det_jac
+
+        log_prob += self.distribution.log_prob(x)
+
+        return log_prob
+
+    def rsample(self, num_samples):
+        x = self.distribution.sample((num_samples,))
+        log_prob = self.distribution.log_prob(x)
+
+        for transform in self.transforms:
+            x, log_det_jac = transform.forward(x)
+            log_prob += log_det_jac
+
+        return x, log_prob
+
+
+class RealNVPNode(nn.Module):
+    def __init__(self, mask, hidden_size):
+        super(RealNVPNode, self).__init__()
+        self.dim = len(mask)
+        self.mask = nn.Parameter(mask, requires_grad=False)
+
+        self.s_func = nn.Sequential(nn.Linear(in_features=self.dim, out_features=hidden_size), nn.LeakyReLU(),
+                                    nn.Linear(in_features=hidden_size, out_features=hidden_size), nn.LeakyReLU(),
+                                    nn.Linear(in_features=hidden_size, out_features=self.dim))
+
+        self.scale = nn.Parameter(torch.Tensor(self.dim))
+
+        self.t_func = nn.Sequential(nn.Linear(in_features=self.dim, out_features=hidden_size), nn.LeakyReLU(),
+                                    nn.Linear(in_features=hidden_size, out_features=hidden_size), nn.LeakyReLU(),
+                                    nn.Linear(in_features=hidden_size, out_features=self.dim))
+
+    def forward(self, x):
+        x_mask = x*self.mask
+        s = self.s_func(x_mask) * self.scale
+        t = self.t_func(x_mask)
+
+        y = x_mask + (1 - self.mask) * (x*torch.exp(s) + t)
+
+        # Sum for -1, since for every batch, and 1-mask, since the log_det_jac is 1 for y1:d = x1:d.
+        log_det_jac = ((1 - self.mask) * s).sum(-1)
+        return y, log_det_jac
+
+    def inverse(self, y):
+        y_mask = y * self.mask
+        s = self.s_func(y_mask) * self.scale
+        t = self.t_func(y_mask)
+
+        x = y_mask + (1-self.mask)*(y - t)*torch.exp(-s)
+
+        inv_log_det_jac = ((1 - self.mask) * -s).sum(-1)
+
+        return x, inv_log_det_jac
+
+
+class RealNVP(nn.Module):
+    def __init__(self, masks, hidden_size):
+        super(RealNVP, self).__init__()
+
+        self.dim = len(masks[0])
+        self.hidden_size = hidden_size
+
+        self.masks = nn.ParameterList([nn.Parameter(torch.Tensor(mask), requires_grad=False) for mask in masks])
+        self.layers = nn.ModuleList([RealNVPNode(mask, self.hidden_size) for mask in self.masks])
+
+        self.distribution = MultivariateNormal(torch.zeros(self.dim), torch.eye(self.dim))
+
+    def log_probability(self, x):
+        log_prob = torch.zeros(x.shape[0])
+        for layer in reversed(self.layers):
+            x, inv_log_det_jac = layer.inverse(x)
+            log_prob += inv_log_det_jac
+        log_prob += self.distribution.log_prob(x)
+
+        return log_prob
+
+    def rsample(self, num_samples):
+        x = self.distribution.sample((num_samples,))
+        log_prob = self.distribution.log_prob(x)
+
+        for layer in self.layers:
+            x, log_det_jac = layer.forward(x)
+            log_prob += log_det_jac
+
+        return x, log_prob
+
+    def sample_each_step(self, num_samples):
+        samples = []
+
+        x = self.distribution.sample((num_samples,))
+        samples.append(x.detach().numpy())
+
+        for layer in self.layers:
+            x, _ = layer.forward(x)
+            samples.append(x.detach().numpy())
+
         return samples
+
+def train(model, data, epochs = 100, batch_size = 64):
+    train_loader = torch.utils.data.DataLoader(data, batch_size=batch_size)
+    optimizer = torch.optim.Adam(model.parameters())
+    
+    losses = []
+    with tqdm.tqdm(range(epochs), unit=' Epoch') as tepoch:
+        epoch_loss = 0
+        for epoch in tepoch:
+            for batch_index, training_sample in enumerate(train_loader):
+                log_prob = model.log_probability(training_sample)
+                loss = - log_prob.mean(0)
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                epoch_loss += loss
+            epoch_loss /= len(train_loader)
+            losses.append(np.copy(epoch_loss.detach().numpy()))
+            tepoch.set_postfix(loss=epoch_loss.detach().numpy())
+
+    return model, losses
+
+
+def plot_density(model, true_dist=None, num_samples=100, mesh_size=4.):
+    x_mesh, y_mesh = np.meshgrid(np.linspace(- mesh_size, mesh_size, num=num_samples),
+                                 np.linspace(- mesh_size, mesh_size, num=num_samples))
+
+    cords = np.stack((x_mesh, y_mesh), axis=2)
+    cords_reshape = cords.reshape([-1, 2])
+    log_prob = np.zeros((num_samples ** 2))
+
+    for i in range(0, num_samples ** 2, num_samples):
+        data = torch.from_numpy(cords_reshape[i:i + num_samples, :]).float()
+        log_prob[i:i + num_samples] = model.log_probability(data).cpu().detach().numpy()
+
+    plt.scatter(cords_reshape[:, 0], cords_reshape[:, 1], c=np.exp(log_prob))
+    plt.colorbar()
+    if true_dist is not None:
+        plt.scatter(true_dist[:, 0], true_dist[:, 1], c='orange', alpha=.05)
+    plt.show()
+
+
+def make_art_gaussian(n_gaussians=3, n_samples=1000):
+    radius = 2.5
+    angles = np.linspace(0, 2 * np.pi, n_gaussians, endpoint=False)
+
+    cov = np.array([[.1, 0], [0, .1]])
+    results = []
+
+    for angle in angles:
+        results.append(
+            np.random.multivariate_normal(radius * np.array([np.cos(angle), np.sin(angle)]), cov,
+                                          int(n_samples / 3) + 1))
+
+    return np.random.permutation(np.concatenate(results))
+
+
+class FlowDataset(Dataset):
+    def __init__(self, dataset_type, num_samples=1000, seed=0, **kwargs):
+        """
+        Dataset used to load different artificial datasets to train normalizing flows on.
+        Args:
+        dataset_type (str): Choose type from: MultiVariateNormal, Moons, Circles or MultipleGaussians
+        num_samples (int): Number of samples to draw.
+        seed (int): Random seed.
+        kwargs: Specific parameters for the different distributions.
+        """
+        np.random.seed(seed)
+        if dataset_type == 'MultiVariateNormal':
+            mean = kwargs.pop('mean', [0, 3])
+            cov = kwargs.pop('mean', np.diag([.1, .1]))
+            self.data = np.random.multivariate_normal(mean, cov, num_samples)
+        elif dataset_type == 'Moons':
+            noise = kwargs.pop('noise', .1)
+            self.data = make_moons(num_samples, noise=noise, random_state=seed, shuffle=True)[0]
+        elif dataset_type == 'Circles':
+            factor = kwargs.pop('factor', .5)
+            noise = kwargs.pop('noise', .05)
+            self.data = make_circles(num_samples, noise=noise, factor=factor, random_state=seed, shuffle=True)[0]
+        elif dataset_type == 'MultipleGaussians':
+            num_gaussians = kwargs.pop('num_gaussians', 3)
+            self.data = make_art_gaussian(num_gaussians, num_samples)
+        else:
+            raise NotImplementedError
+
+        self.num_samples = num_samples
+
+    def __len__(self):
+        return self.num_samples
+
+    def __getitem__(self, index):
+        return torch.from_numpy(self.data[index]).type(torch.FloatTensor)
+
+
+if __name__ == '__main__':
+    num_layers= 4
+    masks = torch.nn.functional.one_hot(torch.tensor([i % 2 for i in range(num_layers)])).float()
+    hidden_size = 32
+
+    data = FlowDataset('MultipleGaussians', num_gaussians=5)
+    NVP_model = RealNVP(masks, hidden_size)
+    flow_model, loss = train(NVP_model, data, epochs = 100)
+
+    plot_density(flow_model)

@@ -332,7 +332,7 @@ if __name__ == '__main__':
         train_x = torch.tensor(train_x).float()
 
         likelihood = dwfa_finetune.eval_likelihood(train_x)
-        flow = FlowDensityEstimator('realnvp', num_inputs=train_x.shape[-1], num_hidden=64, num_blocks=5, num_cond_inputs=None, act='relu', device='cpu')
+        flow = FlowDensityEstimator('realnvp', num_inputs=train_x.shape[-1], num_hidden=32, num_blocks=3, num_cond_inputs=None, act='relu', device='cpu')
         train_lik, test_lik = flow.train({'train': train_x, 'test': train_x }, batch_size=train_x.shape[0], epochs=50)
         print("Length" + str(2 * l) + "result is:")
         print("Model output: "+str(torch.mean(likelihood).detach().cpu().item()) + " RealNVP: " + str(-train_lik) + " Ground truth: " + str( train_ground_truth))
