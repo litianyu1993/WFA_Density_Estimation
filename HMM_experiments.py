@@ -41,10 +41,10 @@ if __name__ == '__main__':
     finetuen_epochs = args.fine_tune_epochs
     index_run = args.run_idx
     fileDir = os.path.dirname(os.path.realpath('__file__'))
-    file_name = os.path.join(fileDir, 'hmm_models\\rank_'+str(r))
+    file_name = os.path.join(fileDir, 'hmm_models' ,'rank_'+str(r))
     exp_name = method + 'run_idx'+str (index_run)
-    if not os.path.exists(file_name + 'exp\\'):
-        os.makedirs(file_name + 'exp\\')
+    if not os.path.exists(file_name + 'exp'):
+        os.makedirs(file_name + 'exp')
 
     with open(file_name, 'rb') as f:
         hmmmodel = pickle.load(f)
