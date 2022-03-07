@@ -42,7 +42,7 @@ if __name__ == '__main__':
     index_run = args.run_idx
     fileDir = os.path.dirname(os.path.realpath('__file__'))
     file_name = os.path.join(fileDir, 'hmm_models' ,'rank_'+str(r))
-    exp_name = method + 'run_idx'+str (index_run)
+    exp_name = method + 'run_idx'+str (index_run) +'N' +str(args.N)
     if not os.path.exists(file_name + 'exp'):
         os.makedirs(file_name + 'exp')
 
