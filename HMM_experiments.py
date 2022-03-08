@@ -11,6 +11,45 @@ from neural_density_estimation import hankel_density, ground_truth_hmm, insert_b
 import os
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+def evaluate(model, hmmmodel, method, exp_name, r, N, fileDir,load_test = False, xd = 1):
+    ls = np.arange(2, 1000)
+    test_data = {}
+    if not load_test:
+        for l in ls:
+            train_x = np.zeros([1000, xd, l])
+            for i in range(1000):
+                x, z = hmmmodel.sample(l)
+                train_x[i, :, :] = x.reshape(xd, -1)
+            test_data[l] = train_x
+        file_name = os.path.join(fileDir, 'hmm_models', 'rank_' + str(r) + 'exp', 'test_data_N'+str(N))
+        with open(file_name, 'wb') as f:
+            pickle.dump(test_data, f)
+    else:
+        file_name = os.path.join(fileDir, 'hmm_models', 'rank_' + str(r) + 'exp', 'test_data_N'+str(N))
+        with open(file_name, 'rb') as f:
+            test_data = pickle.load(f)
+
+    results = {}
+    results['exp_parameters'] = args
+    for l in ls:
+        train_ground_truth = ground_truth_hmm(test_data[l], hmmmodel)
+        train_x = torch.tensor(test_data[l]).float()
+        if method == 'WFA':
+            likelihood = model.eval_likelihood(train_x)
+        else:
+            likelihood = -rnade_rnn.lossfunc(torch.swapaxes(train_x, 1, 2))
+        results[l] = {
+            'model_output': torch.mean(likelihood),
+            'ground_truth': train_ground_truth
+        }
+        print("Length" + str(l) + "result is:")
+        print("Model output: " + str(torch.mean(likelihood)) + "Ground truth: " + str(train_ground_truth))
+        file_name = os.path.join(fileDir, 'hmm_models', 'rank_' + str(r) + 'exp', exp_name)
+        with open(file_name, 'wb') as f:
+            pickle.dump(results, f)
+    return
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--hmm_rank', default=2, type=int, help='Rank of the HMM')
@@ -26,7 +65,13 @@ if __name__ == '__main__':
     parser.add_argument('--LSTM_epochs', default=100, type=int, help='WFA finetune epochs')
     parser.add_argument('--batch_size', default=256, type=int, help='Batch size')
     parser.add_argument('--run_idx', default=0, type = int, help='index of the run')
+    parser.add_argument('--seed', default = 1993, type = int, help='random seed')
+    parser.add_argument('--load_test_data', dest='load_data', action='store_true')
+    parser.add_argument('--new_test_data', dest='load_data', action='store_false')
+    parser.set_defaults(load_data=True)
     args = parser.parse_args()
+    load_test = args.load_data
+    np.random.seed(args.seed)
     batch_size = args.batch_size
     r = args.hmm_rank
     method = args.method
@@ -83,29 +128,8 @@ if __name__ == '__main__':
             DATA[data_label[k][0]] = train_x
             DATA[data_label[k][1]] = test_x
         dwfa_finetune = learn_density_WFA(DATA, model_params, l, plot=False)
+        evaluate(dwfa_finetune, hmmmodel,method, exp_name, r, fileDir,load_test=load_test, N=args.N)
 
-        ls = np.arange(2, 100)
-        results = {}
-        results['exp_parameters'] = args
-        for l in ls:
-            train_x = np.zeros([1000, xd, l])
-            # print(2*l)
-            for i in range(1000):
-                x, z = hmmmodel.sample(l)
-                train_x[i, :, :] = x.reshape(xd, -1)
-            train_ground_truth = ground_truth_hmm(train_x, hmmmodel)
-            train_x = torch.tensor(train_x).float()
-
-            likelihood = dwfa_finetune.eval_likelihood(train_x)
-            results[l] = {
-                'model_output': torch.mean(likelihood),
-                'ground_truth': train_ground_truth
-            }
-            print("Length" + str(l) + "result is:")
-            print("Model output: " + str(torch.mean(likelihood)) + "Ground truth: " + str(train_ground_truth))
-            file_name = os.path.join(fileDir, 'hmm_models','rank_'+str(r)+'exp',exp_name)
-            with open(file_name, 'wb') as f:
-                pickle.dump(results, f)
 
     elif method == 'LSTM':
         N = 3*N
@@ -142,23 +166,7 @@ if __name__ == '__main__':
         train_likeli, test_likeli = rnade_rnn.fit(train_x, test_x, train_loader, test_loader, lstm_epochs, optimizer,
                                                   scheduler=None,
                                                   verbose=True)
-        ls = np.arange(2, 100)
-        results = {}
-        results['exp_parameters'] = args
-        for l in ls:
-            train_x = np.zeros([1000, l, xd])
-            # print(2*l)
-            for i in range(1000):
-                x, z = hmmmodel.sample(l)
-                train_x[i, :, :] = x.reshape(-1, xd)
-            train_ground_truth = ground_truth_hmm(train_x.swapaxes(1, 2), hmmmodel)
-            train_x = torch.tensor(train_x).float()
+        evaluate(model=rnade_rnn, hmmmodel=hmmmodel, method=method, exp_name=exp_name, r=r, fileDir=fileDir, load_test=load_test, N = args.N)
 
-            likelihood = -rnade_rnn.lossfunc(train_x)
-            print("Length" + str(l) + "result is:")
-            print("Model output: " + str(torch.mean(likelihood)) + "Ground truth: " + str(train_ground_truth))
-            file_name = os.path.join(fileDir, 'hmm_models','rank_' + str(r) + 'exp', exp_name)
-            with open(file_name, 'wb') as f:
-                pickle.dump(results, f)
 
 

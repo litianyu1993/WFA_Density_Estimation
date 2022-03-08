@@ -43,15 +43,16 @@ class RNADE_RNN(nn.Module):
         result = 0.
         for i in range(X.shape[1]):
             x = X[:, i, :].reshape(X.shape[0], 1, X.shape[-1])
-            output, (state_h, state_c) = self.lstm(x, prev_state)
-            prev_state = (state_h, state_c)
-            # print(output.shape, state_h.shape, state_c.shape)
-            state = torch.relu(output)
+            state = torch.relu(torch.swapaxes(prev_state[0], 0, 1))
             mu = self.mu_out(state)
             sig = torch.exp(self.sig_out(state))
             alpha = torch.softmax(self.alpha_out(state), dim=1)
             tmp = torch_mixture_gaussian(x.reshape(x.shape[0], -1), mu, sig, alpha)
             result += tmp
+            output, (state_h, state_c) = self.lstm(x, prev_state)
+            prev_state = (state_h, state_c)
+            # print(output.shape, state_h.shape, state_c.shape)
+
             # print(X.shape, mu.shape, sig.shape, alpha.shape)
         return result
 
