@@ -12,10 +12,12 @@ import os
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def evaluate(model, hmmmodel, method, exp_name, r, N, fileDir,load_test = False, xd = 1):
-    ls = np.arange(2, 1000)
+    ls = np.arange(1, 50)*8
+    print(ls)
     test_data = {}
     if not load_test:
         for l in ls:
+            print(l)
             train_x = np.zeros([1000, xd, l])
             for i in range(1000):
                 x, z = hmmmodel.sample(l)

@@ -61,7 +61,7 @@ def gen_hmm_parameters(r = 3):
     return init, transition, mu, var
 
 if __name__ == '__main__':
-    rs = [2, 4, 6, 8, 10, 15, 20, 25, 30, 40, 50]
+    rs = [5, 10, 20, 40]
     for r in rs:
         hmmmodel = hmm.GaussianHMM(n_components=r, covariance_type="full")
         hmmmodel.startprob_, hmmmodel.transmat_, hmmmodel.means_, hmmmodel.covars_ = gen_hmm_parameters(r)
