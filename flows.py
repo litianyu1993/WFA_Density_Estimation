@@ -341,6 +341,7 @@ def train(model, data, epochs = 100, batch_size = 64):
         epoch_loss = 0
         for epoch in tepoch:
             for batch_index, training_sample in enumerate(train_loader):
+                training_sample = training_sample.view(training_sample.shape[0], -1).float()
                 log_prob = model.log_probability(training_sample)
                 loss = - log_prob.mean()
 
@@ -352,6 +353,7 @@ def train(model, data, epochs = 100, batch_size = 64):
             epoch_loss /= len(train_loader)
             losses.append(np.copy(epoch_loss.detach().numpy()))
             tepoch.set_postfix(loss=epoch_loss.detach().numpy())
+    test_data = test_data.view(test_data.shape[0], -1).float()
     test_loss = -model.log_probability(test_data).mean().detach().numpy()
     return model, losses, test_loss
 

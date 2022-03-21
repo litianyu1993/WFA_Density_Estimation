@@ -4,7 +4,8 @@ import numpy as np
 import pickle
 import time
 import os
-from flows import FlowDensityEstimator
+from flows import BNAF, NumPyDataset
+from flows import train as train_flow
 
 def sliding_window(X, window_size = 5):
     final_data = []
@@ -41,7 +42,7 @@ if __name__ == '__main__':
     validation_split = 0.8
     l = 4  # length in trianning (l, 2l, 2l+1)
     Ls = [l, 2 * l, 2 * l + 1]
-    baseline = None
+    flow_type = 'BNAF'
 
 
     model_params = {
@@ -85,9 +86,14 @@ if __name__ == '__main__':
                 # print(train_x.shape, vali_x.shape)
                 DATA[data_label[k][0]] = train_x
                 DATA[data_label[k][1]] = vali_x
-            if baseline is not None:
-                flow = FlowDensityEstimator(baseline, num_inputs=DATA['train_2l1'].shape[-1], num_hidden=64, num_blocks=5, num_cond_inputs=None, act='relu', device=device)
-                train_loss = flow.train(DATA, batch_size=model_params['batch_size'], epochs=model_params['epochs'])
+            if flow_type == 'BNAF':
+                n_input = np.prod(DATA['train_2l1'].shape[1:])
+                n_layers = 4
+                n_hidden = n_input * n_layers
+                flow = BNAF(n_input=n_input, n_layers=n_layers, n_hidden=n_hidden)
+                flow, train_lik, test_lik = train_flow(flow, {'train': NumPyDataset(DATA['train_2l1']), 'test': DATA['test_2l1'] }, batch_size=model_params['batch_size'], epochs=model_params['epochs'])
+                print('Flow type: %s Train lik: %.3f Test lik: %.3f'%(flow_type, train_lik[-1], test_lik))
+                # train_loss = flow.train(DATA, batch_size=model_params['batch_size'], epochs=model_params['epochs'])
 
                 # out_file_name = os.path.join(exp_folder, baseline+'_'+str(key)+'.pth')
                 # torch.save(flow.state_dict(), out_file_name)
