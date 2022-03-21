@@ -12,7 +12,7 @@ from matplotlib import pyplot as plt
 from gradient_descent import *
 from Density_WFA import density_wfa
 from torch.nn.utils.parametrizations import spectral_norm
-from flows import FlowDensityEstimator
+from flows import RealNVP, NumPyDataset, train, BNAF
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -318,7 +318,7 @@ if __name__ == '__main__':
         DATA[data_label[k][1]] = test_x
 
 
-    dwfa_finetune = learn_density_WFA(DATA, model_params, l, plot=False)
+    # dwfa_finetune = learn_density_WFA(DATA, model_params, l, plot=False)
 
 
     ls = [3, 4, 5, 6, 7, 8, 9, 10]
@@ -331,12 +331,20 @@ if __name__ == '__main__':
         train_ground_truth = ground_truth_hmm(train_x, hmmmodel)
         train_x = torch.tensor(train_x).float()
 
-        likelihood = dwfa_finetune.eval_likelihood(train_x)
-        flow = FlowDensityEstimator('realnvp', num_inputs=train_x.shape[-1], num_hidden=32, num_blocks=3, num_cond_inputs=None, act='relu', device='cpu')
-        train_lik, test_lik = flow.train({'train': train_x, 'test': train_x }, batch_size=train_x.shape[0], epochs=50)
+        # likelihood = dwfa_finetune.eval_likelihood(train_x)
+        likelihood = torch.FloatTensor([0.])
+        # n_input = train_x.shape[-1]
+        n_input = 6
+        n_batch = train_x.shape[0]
+        train_x = train_x.reshape(n_batch, -1)[:,:n_input] + torch.FloatTensor(np.random.normal(scale=0.1, size=(n_batch, n_input)))
+        n_layers = 6
+        n_hidden = 30
+        # flow = RealNVP(n_input=n_input, n_layers=n_layers, n_hidden=n_hidden)
+        flow = BNAF(n_input=n_input, n_layers=n_layers, n_hidden=n_hidden)
+        flow, train_lik, test_lik = train(flow, {'train': NumPyDataset(train_x), 'test': train_x }, batch_size=64, epochs=10)
         print("Length" + str(2 * l) + "result is:")
-        print("Model output: "+str(torch.mean(likelihood).detach().cpu().item()) + " RealNVP: " + str(-train_lik) + " Ground truth: " + str( train_ground_truth))
-
+        print("Model output: "+str(torch.mean(likelihood).detach().cpu().item()) + " BNAF: " + str(-train_lik[-1]) + " Ground truth: " + str( train_ground_truth))
+        exit()
 
 
 

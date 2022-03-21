@@ -6,6 +6,7 @@ import scipy as sp
 import scipy.linalg
 import torch
 import torch.nn as nn
+import torch.distributions as D
 import torch.nn.functional as F
 from torch import optim
 
@@ -15,171 +16,228 @@ from torch.utils.data import Dataset
 import tqdm
 import matplotlib.pyplot as plt
 
-class FlowDensityEstimator(nn.Module):
-    def __init__(self, flow, num_inputs=1, num_hidden=64, num_blocks=1, num_cond_inputs=None, lr=3e-4, act='relu', device='cpu'):
-        super(FlowDensityEstimator, self).__init__()
-        self.device = device
-        self.flow = flow
-        assert flow in ['maf', 'maf-split', 'maf-split-glow', 'realnvp', 'glow']
-        modules = []
-        if flow == 'glow':
-            mask = torch.arange(0, num_inputs) % 2
-            mask = mask.to(device).float()
+def potential_fn(dataset):
+    # NF paper table 1 energy functions
+    w1 = lambda z: torch.sin(2 * math.pi * z[:,0] / 4)
+    w2 = lambda z: 3 * torch.exp(-0.5 * ((z[:,0] - 1)/0.6)**2)
+    w3 = lambda z: 3 * torch.sigmoid((z[:,0] - 1) / 0.3)
 
-            for _ in range(num_blocks):
-                modules += [
-                    BatchNormFlow(num_inputs),
-                    LUInvertibleMM(num_inputs),
-                    CouplingLayer(
-                        num_inputs, num_hidden, mask, num_cond_inputs,
-                        s_act='tanh', t_act='relu')
-                ]
-                mask = 1 - mask
-        elif flow == 'realnvp':
-            mask = torch.arange(0, num_inputs) % 2
-            mask = mask.to(device).float()
+    if dataset == 'u1':
+        return lambda z: 0.5 * ((torch.norm(z, p=2, dim=1) - 2) / 0.4)**2 - \
+                                torch.log(torch.exp(-0.5*((z[:,0] - 2) / 0.6)**2) + \
+                                          torch.exp(-0.5*((z[:,0] + 2) / 0.6)**2) + 1e-10)
 
-            for _ in range(num_blocks):
-                modules += [
-                    CouplingLayer(
-                        num_inputs, num_hidden, mask, num_cond_inputs,
-                        s_act='tanh', t_act='relu'),
-                    BatchNormFlow(num_inputs)
-                ]
-                mask = 1 - mask
-        elif flow == 'maf':
-            for _ in range(num_blocks):
-                modules += [
-                    MADE(num_inputs, num_hidden, num_cond_inputs, act=act),
-                    BatchNormFlow(num_inputs),
-                    Reverse(num_inputs)
-                ]
-        elif flow == 'maf-split':
-            for _ in range(num_blocks):
-                modules += [
-                    MADESplit(num_inputs, num_hidden, num_cond_inputs,
-                                s_act='tanh', t_act='relu'),
-                    BatchNormFlow(num_inputs),
-                    Reverse(num_inputs)
-                ]
-        elif flow == 'maf-split-glow':
-            for _ in range(num_blocks):
-                modules += [
-                    MADESplit(num_inputs, num_hidden, num_cond_inputs,
-                                s_act='tanh', t_act='relu'),
-                    BatchNormFlow(num_inputs),
-                    InvertibleMM(num_inputs)
-                ]
+    elif dataset == 'u2':
+        return lambda z: 0.5 * ((z[:,1] - w1(z)) / 0.4)**2
 
-        self.model = FlowSequential(*modules)
+    elif dataset == 'u3':
+        return lambda z: - torch.log(torch.exp(-0.5*((z[:,1] - w1(z))/0.35)**2) + \
+                                     torch.exp(-0.5*((z[:,1] - w1(z) + w2(z))/0.35)**2) + 1e-10)
 
-        for module in self.model.modules():
-            if isinstance(module, nn.Linear):
-                nn.init.orthogonal_(module.weight)
-                if hasattr(module, 'bias') and module.bias is not None:
-                    module.bias.data.fill_(0)
+    elif dataset == 'u4':
+        return lambda z: - torch.log(torch.exp(-0.5*((z[:,1] - w1(z))/0.4)**2) + \
+                                     torch.exp(-0.5*((z[:,1] - w1(z) + w3(z))/0.35)**2) + 1e-10)
 
-        self.model.to(device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=lr, weight_decay=1e-6)
-
-    def train(self, data, batch_size=128, epochs=10):
-        self.model.train()
-        # n_samples x T x n_d
-        train_data = data['train'].float()
-        test_data = data['test'].float()
-        
-        for e in range(epochs):
-            train_loss = 0.
-            n_batches = train_data.shape[0]//batch_size
-            idx = torch.rand(n_batches * batch_size).argsort().view(n_batches, batch_size)
-            
-            for batch_idx in idx:
-                batch = train_data[batch_idx]
-                batch = batch.to(self.device)
-                cond_data = None
-                self.optimizer.zero_grad()
-                loss = -self.model.log_probs(batch, cond_data).mean()
-                train_loss += loss.item()
-                loss.backward()
-                self.optimizer.step()
-
-            train_loss = train_loss / n_batches
-            validation_loss = -self.model.log_probs(test_data, cond_data).mean()
-            # print('Epoch: %d Train Likelihood: %f Validate Likelihood: %f'%(e, -train_loss, -validation_loss))
-        return train_loss, validation_loss
-
-def get_mask(in_features, out_features, in_flow_features, mask_type=None):
-    """
-    mask_type: input | None | output
-    
-    See Figure 1 for a better illustration:
-    https://arxiv.org/pdf/1502.03509.pdf
-    """
-    
-    if mask_type == 'input':
-        in_degrees = torch.arange(in_features) % in_flow_features
     else:
-        in_degrees = torch.arange(in_features) % (in_flow_features - 1)
+        raise RuntimeError('Invalid potential name to sample from.')
 
-    if mask_type == 'output':
-        out_degrees = torch.arange(out_features) % in_flow_features - 1
+def sample_2d_data(dataset, n_samples):
+
+    z = torch.randn(n_samples, 2)
+
+    if dataset == '8gaussians':
+        scale = 4
+        sq2 = 1/math.sqrt(2)
+        centers = [(1,0), (-1,0), (0,1), (0,-1), (sq2,sq2), (-sq2,sq2), (sq2,-sq2), (-sq2,-sq2)]
+        centers = torch.tensor([(scale * x, scale * y) for x,y in centers])
+        return sq2 * (0.5 * z + centers[torch.randint(len(centers), size=(n_samples,))])
+
+    elif dataset == '2spirals':
+        n = torch.sqrt(torch.rand(n_samples // 2)) * 540 * (2 * math.pi) / 360
+        d1x = - torch.cos(n) * n + torch.rand(n_samples // 2) * 0.5
+        d1y =   torch.sin(n) * n + torch.rand(n_samples // 2) * 0.5
+        x = torch.cat([torch.stack([ d1x,  d1y], dim=1),
+                       torch.stack([-d1x, -d1y], dim=1)], dim=0) / 3
+        return x + 0.1*z
+
+    elif dataset == 'checkerboard':
+        x1 = torch.rand(n_samples) * 4 - 2
+        x2_ = torch.rand(n_samples) - torch.randint(0, 2, (n_samples,), dtype=torch.float) * 2
+        x2 = x2_ + x1.floor() % 2
+        return torch.stack([x1, x2], dim=1) * 2
+
+    elif dataset == 'rings':
+        n_samples4 = n_samples3 = n_samples2 = n_samples // 4
+        n_samples1 = n_samples - n_samples4 - n_samples3 - n_samples2
+
+        # so as not to have the first point = last point, set endpoint=False in np; here shifted by one
+        linspace4 = torch.linspace(0, 2 * math.pi, n_samples4 + 1)[:-1]
+        linspace3 = torch.linspace(0, 2 * math.pi, n_samples3 + 1)[:-1]
+        linspace2 = torch.linspace(0, 2 * math.pi, n_samples2 + 1)[:-1]
+        linspace1 = torch.linspace(0, 2 * math.pi, n_samples1 + 1)[:-1]
+
+        circ4_x = torch.cos(linspace4)
+        circ4_y = torch.sin(linspace4)
+        circ3_x = torch.cos(linspace4) * 0.75
+        circ3_y = torch.sin(linspace3) * 0.75
+        circ2_x = torch.cos(linspace2) * 0.5
+        circ2_y = torch.sin(linspace2) * 0.5
+        circ1_x = torch.cos(linspace1) * 0.25
+        circ1_y = torch.sin(linspace1) * 0.25
+
+        x = torch.stack([torch.cat([circ4_x, circ3_x, circ2_x, circ1_x]),
+                         torch.cat([circ4_y, circ3_y, circ2_y, circ1_y])], dim=1) * 3.0
+
+        # random sample
+        x = x[torch.randint(0, n_samples, size=(n_samples,))]
+
+        # Add noise
+        return x + torch.normal(mean=torch.zeros_like(x), std=0.08*torch.ones_like(x))
+
     else:
-        out_degrees = torch.arange(out_features) % (in_flow_features - 1)
-
-    return (out_degrees.unsqueeze(-1) >= in_degrees.unsqueeze(0)).float()
+        raise RuntimeError('Invalid `dataset` to sample from.')
 
 
-class SimpleAffine(nn.Module):
-    def __init__(self, dim=2):
+# --------------------
+# Model components
+# --------------------
+
+class MaskedLinear(nn.Module):
+    def __init__(self, in_features, out_features, data_dim):
         super().__init__()
-        self.dim = dim
-        self.a = nn.Parameter(torch.zeros(self.dim))  # log_scale
-        self.b = nn.Parameter(torch.zeros(self.dim))  # shift
+        self.in_features = in_features
+        self.out_features = out_features
+        self.data_dim = data_dim
+
+        # Notation:
+        # BNAF weight calculation for (eq 8): W = g(W) * M_d + W * M_o
+        #   where W is block lower triangular so model is autoregressive,
+        #         g = exp function; M_d is block diagonal mask; M_o is block off-diagonal mask.
+        # Weight Normalization (Salimans & Kingma, eq 2): w = g * v / ||v||
+        #   where g is scalar, v is k-dim vector, ||v|| is Euclidean norm
+        # ------
+        # Here: pre-weight norm matrix is v; then: v = exp(weight) * mask_d + weight * mask_o
+        #       weight-norm scalar is g: out_features dimensional vector (here logg is used instead to avoid taking logs in the logdet calc.
+        #       then weight-normed weight matrix is w = g * v / ||v||
+        #
+        #       log det jacobian of block lower triangular is taking block diagonal mask of
+        #           log(g*v/||v||) = log(g) + log(v) - log(||v||)
+        #                          = log(g) + weight - log(||v||) since v = exp(weight) * mask_d + weight * mask_o
+
+        weight = torch.zeros(out_features, in_features)
+        mask_d = torch.zeros_like(weight)
+        mask_o = torch.zeros_like(weight)
+        for i in range(data_dim):
+            # select block slices
+            h     = slice(i * out_features // data_dim, (i+1) * out_features // data_dim)
+            w     = slice(i * in_features // data_dim,  (i+1) * in_features // data_dim)
+            w_row = slice(0,                            (i+1) * in_features // data_dim)
+            # initialize block-lower-triangular weight and construct block diagonal mask_d and lower triangular mask_o
+            nn.init.kaiming_uniform_(weight[h,w_row], a=math.sqrt(5))  # default nn.Linear weight init only block-wise
+            mask_d[h,w] = 1
+            mask_o[h,w_row] = 1
+
+        mask_o = mask_o - mask_d  # remove diagonal so mask_o is lower triangular 1-off the diagonal
+
+        self.weight = nn.Parameter(weight)                          # pre-mask, pre-weight-norm
+        self.logg = nn.Parameter(torch.rand(out_features, 1).log()) # weight-norm parameter
+        self.bias = nn.Parameter(nn.init.uniform_(torch.rand(out_features), -1/math.sqrt(in_features), 1/math.sqrt(in_features)))  # default nn.Linear bias init
+        self.register_buffer('mask_d', mask_d)
+        self.register_buffer('mask_o', mask_o)
+
+    def forward(self, x, sum_logdets):
+        # 1. compute BNAF masked weight eq 8
+        v = self.weight.exp() * self.mask_d + self.weight * self.mask_o
+        # 2. weight normalization
+        v_norm = v.norm(p=2, dim=1, keepdim=True)
+        w = self.logg.exp() * v / v_norm
+        # 3. compute output and logdet of the layer
+        out = F.linear(x, w, self.bias)
+        logdet = self.logg + self.weight - 0.5 * v_norm.pow(2).log()
+        logdet = logdet[self.mask_d.byte()]
+        logdet = logdet.view(1, self.data_dim, out.shape[1]//self.data_dim, x.shape[1]//self.data_dim) \
+                       .expand(x.shape[0],-1,-1,-1)  # output (B, data_dim, out_dim // data_dim, in_dim // data_dim)
+
+        # 4. sum with sum_logdets from layers before (BNAF section 3.3)
+        # Compute log det jacobian of the flow (eq 9, 10, 11) using log-matrix multiplication of the different layers.
+        # Specifically for two successive MaskedLinear layers A -> B with logdets A and B of shapes
+        #  logdet A is (B, data_dim, outA_dim, inA_dim)
+        #  logdet B is (B, data_dim, outB_dim, inB_dim) where outA_dim = inB_dim
+        #
+        #  Note -- in the first layer, inA_dim = in_features//data_dim = 1 since in_features == data_dim.
+        #            thus logdet A is (B, data_dim, outA_dim, 1)
+        #
+        #  Then:
+        #  logsumexp(A.transpose(2,3) + B) = logsumexp( (B, data_dim, 1, outA_dim) + (B, data_dim, outB_dim, inB_dim) , dim=-1)
+        #                                  = logsumexp( (B, data_dim, 1, outA_dim) + (B, data_dim, outB_dim, outA_dim), dim=-1)
+        #                                  = logsumexp( (B, data_dim, outB_dim, outA_dim), dim=-1) where dim2 of tensor1 is broadcasted
+        #                                  = (B, data_dim, outB_dim, 1)
+
+        sum_logdets = torch.logsumexp(sum_logdets.transpose(2,3) + logdet, dim=-1, keepdim=True)
+
+        return out, sum_logdets
+
+
+    def extra_repr(self):
+        return 'in_features={}, out_features={}, bias={}'.format(
+            self.in_features, self.out_features, self.bias is not None
+        )
+
+class Tanh(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x, sum_logdets):
+        # derivation of logdet:
+        # d/dx tanh = 1 / cosh^2; cosh = (1 + exp(-2x)) / (2*exp(-x))
+        # log d/dx tanh = - 2 * log cosh = -2 * (x - log 2 + log(1 + exp(-2x)))
+        logdet = -2 * (x - math.log(2) + F.softplus(-2*x))
+        sum_logdets = sum_logdets + logdet.view_as(sum_logdets)
+        return x.tanh(), sum_logdets
+
+class FlowSequential(nn.Sequential):
+    """ Container for layers of a normalizing flow """
+    def forward(self, x):
+        sum_logdets = torch.zeros(1, x.shape[1], 1, 1, device=x.device)
+        for module in self:
+            x, sum_logdets = module(x, sum_logdets)
+        return x, sum_logdets.squeeze()
+
+
+# --------------------
+# Model
+# --------------------
+
+class BNAF(nn.Module):
+    def __init__(self, n_input, n_layers, n_hidden):
+        super().__init__()
+
+        # base distribution for calculation of log prob under the model
+        self.register_buffer('base_dist_mean', torch.zeros(n_input))
+        self.register_buffer('base_dist_var', torch.ones(n_input))
+
+        # construct model
+        modules = []
+        modules += [MaskedLinear(n_input, n_hidden, n_input), Tanh()]
+        for _ in range(n_layers):
+            modules += [MaskedLinear(n_hidden, n_hidden, n_input), Tanh()]
+        modules += [MaskedLinear(n_hidden, n_input, n_input)]
+        self.net = FlowSequential(*modules)
+
+        # TODO --   add permutation
+        #           add residual gate
+        #           add stack of flows
+
+    @property
+    def base_dist(self):
+        return D.Normal(self.base_dist_mean, self.base_dist_var)
 
     def forward(self, x):
-        y = torch.exp(self.a) * x + self.b
-
-        det_jac = torch.exp(self.a.sum())
-        log_det_jac = torch.ones(y.shape[0]) * torch.log(det_jac)
-
-        return y, log_det_jac
-
-    def inverse(self, y):
-        x = (y - self.b) / torch.exp(self.a)
-
-        det_jac = 1 / torch.exp(self.a.sum())
-        inv_log_det_jac = torch.ones(y.shape[0]) * torch.log(det_jac)
-
-        return x, inv_log_det_jac
-
-
-class StackSimpleAffine(nn.Module):
-    def __init__(self, transforms, dim=2):
-        super().__init__()
-        self.dim = dim
-        self.transforms = nn.ModuleList(transforms)
-        self.distribution = MultivariateNormal(torch.zeros(self.dim), torch.eye(self.dim))
+        return self.net(x)
 
     def log_probability(self, x):
-        log_prob = torch.zeros(x.shape[0])
-        for transform in reversed(self.transforms):
-            x, inv_log_det_jac = transform.inverse(x)
-            log_prob += inv_log_det_jac
-
-        log_prob += self.distribution.log_prob(x)
-
-        return log_prob
-
-    def rsample(self, num_samples):
-        x = self.distribution.sample((num_samples,))
-        log_prob = self.distribution.log_prob(x)
-
-        for transform in self.transforms:
-            x, log_det_jac = transform.forward(x)
-            log_prob += log_det_jac
-
-        return x, log_prob
-
+        z, logdet = self.forward(x)
+        return torch.sum(self.base_dist.log_prob(z) + logdet, dim=1)
 
 class RealNVPNode(nn.Module):
     def __init__(self, mask, hidden_size):
@@ -221,11 +279,20 @@ class RealNVPNode(nn.Module):
 
 
 class RealNVP(nn.Module):
-    def __init__(self, masks, hidden_size):
+    def __init__(self, n_input, n_layers, n_hidden):
         super(RealNVP, self).__init__()
 
+        # masks = torch.cat([torch.stack([
+        #         torch.arange(1, n_input+1).float() % 2,
+        #         torch.arange(0, n_input).float() % 2
+        #         ]
+        #         ) for i in range(n_layers//2)], 0)
+        masks = torch.FloatTensor(np.mod(np.arange(n_input).reshape(-1,1)+np.arange(n_input), 2).astype(np.float32))
+        config = 1
+        masks = torch.stack([masks[0] if config == 0 else masks[1] for i in range(n_layers)])
+
         self.dim = len(masks[0])
-        self.hidden_size = hidden_size
+        self.hidden_size = n_hidden
 
         self.masks = nn.ParameterList([nn.Parameter(torch.Tensor(mask), requires_grad=False) for mask in masks])
         self.layers = nn.ModuleList([RealNVPNode(mask, self.hidden_size) for mask in self.masks])
@@ -264,7 +331,9 @@ class RealNVP(nn.Module):
         return samples
 
 def train(model, data, epochs = 100, batch_size = 64):
-    train_loader = torch.utils.data.DataLoader(data, batch_size=batch_size)
+    train_data = data['train']
+    test_data = data['test']
+    train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size)
     optimizer = torch.optim.Adam(model.parameters())
     
     losses = []
@@ -273,7 +342,7 @@ def train(model, data, epochs = 100, batch_size = 64):
         for epoch in tepoch:
             for batch_index, training_sample in enumerate(train_loader):
                 log_prob = model.log_probability(training_sample)
-                loss = - log_prob.mean(0)
+                loss = - log_prob.mean()
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -283,8 +352,8 @@ def train(model, data, epochs = 100, batch_size = 64):
             epoch_loss /= len(train_loader)
             losses.append(np.copy(epoch_loss.detach().numpy()))
             tepoch.set_postfix(loss=epoch_loss.detach().numpy())
-
-    return model, losses
+    test_loss = -model.log_probability(test_data).mean().detach().numpy()
+    return model, losses, test_loss
 
 
 def plot_density(model, true_dist=None, num_samples=100, mesh_size=4.):
@@ -358,13 +427,25 @@ class FlowDataset(Dataset):
         return torch.from_numpy(self.data[index]).type(torch.FloatTensor)
 
 
+class NumPyDataset(Dataset):
+    def __init__(self, X, **kwargs):
+        self.X = X
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, index):
+        # return torch.from_numpy(self.X[index]).type(torch.FloatTensor)
+        return self.X[index]
+
 if __name__ == '__main__':
-    num_layers= 4
-    masks = torch.nn.functional.one_hot(torch.tensor([i % 2 for i in range(num_layers)])).float()
-    hidden_size = 32
+    n_input = 2
+    n_layers = 4
+    n_hidden = 256
 
     data = FlowDataset('MultipleGaussians', num_gaussians=5)
-    NVP_model = RealNVP(masks, hidden_size)
-    flow_model, loss = train(NVP_model, data, epochs = 100)
+    # NVP_model = RealNVP(n_input=n_input, n_layers=n_layers, n_hidden=n_hidden)
+    bnaf_model = BNAF(n_input=n_input, n_layers=n_layers, n_hidden=n_hidden)
+    flow_model, loss, test_loss = train(bnaf_model, {'train': data, 'test': data[:128]}, epochs = 100)
 
     plot_density(flow_model)
