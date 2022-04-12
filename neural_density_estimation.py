@@ -132,12 +132,13 @@ class hankel_density(nn.Module):
         validation_likelihood = []
         count = 0
         for epoch in range(epochs):
-            train_likehood.append(train(self, self.device, train_loader, optimizer, X=train_x).detach().to('cpu'))
-            validation_likelihood.append(validate(self, self.device, validation_loader, X=test_x).detach().to('cpu'))
+            train_likehood.append(train(self, self.device, train_loader, optimizer, X=train_x))
+            validation_likelihood.append(validate(self, self.device, validation_loader, X=test_x))
             if verbose:
                 print('Epoch: ' + str(epoch) + 'Train Likelihood: {:.10f} Validate Likelihood: {:.10f}'.format(
                     train_likehood[-1],
                     validation_likelihood[-1]))
+            if  epoch > 10 and validation_likelihood[-1] > validation_likelihood[-2]: break
             if scheduler is not None:
                 scheduler.step(-validation_likelihood[-1])
         if not self.nn_transition and not self.GD_linear_transition:
@@ -162,18 +163,19 @@ class hankel_density(nn.Module):
         #     for j in range(self.core_list[i].shape[1]):
         #         sum_trace += torch.sqrt(torch.trace(self.core_list[i][:, j, :]) ** 2)
         # print(self(X))
-        return -log_likelihood + hidden_norm
+        return -log_likelihood+0.001*hidden_norm
 
 
 def ground_truth_hmm(X, hmmmodel):
-    likelihood = []
+    log_likelihood = []
     for i in range(X.shape[0]):
         # p = hmmmodel.predict_proba(X[i, :, :].transpose())
-        p = np.exp(hmmmodel.score(X[i, :, :].transpose()))
-        likelihood.append(p)
-    likelihood = np.asarray(likelihood)
-    # tmp = likelihood/np.sum(likelihood)
-    tmp = np.log(likelihood)
+        p = hmmmodel.score(X[i, :, :].transpose())
+        log_likelihood.append(p)
+    log_likelihood = np.asarray(log_likelihood)
+    likelihood = np.exp(log_likelihood)
+    # print(log_likelihood.shape, likelihood.shape)
+    tmp = log_likelihood
     # print(tmp)
     return np.mean(tmp)
 

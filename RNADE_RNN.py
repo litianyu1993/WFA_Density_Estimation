@@ -67,6 +67,16 @@ class RNADE_RNN(nn.Module):
         # print(log_likelihood)
         return -log_likelihood
 
+    def eval_likelihood(self, X, batch = False):
+        # print(X)
+        state_h, state_c = self.init_state(N=X.shape[0])
+        log_likelihood = self(X, (state_h, state_c)).detach().cpu().numpy()
+        likelihood = np.exp(log_likelihood)
+        if not batch:
+            return np.mean(log_likelihood)
+        else:
+            return log_likelihood
+
 
 
     def fit(self, train_x, test_x, train_loader, validation_loader, epochs, optimizer, scheduler=None, verbose=True):
@@ -75,12 +85,13 @@ class RNADE_RNN(nn.Module):
         count = 0
         for epoch in range(epochs):
             # train(self, self.device, train_loader, optimizer, X=train_x)
-            train_likehood.append(train(self, self.device, train_loader, optimizer, X=train_x).detach().to('cpu'))
-            validation_likelihood.append(validate(self, self.device, validation_loader, X=test_x).detach().to('cpu'))
+            train_likehood.append(train(self, self.device, train_loader, optimizer, X=train_x))
+            validation_likelihood.append(validate(self, self.device, validation_loader, X=test_x))
             if verbose:
                 print('Epoch: ' + str(epoch) + 'Train Likelihood: {:.10f} Validate Likelihood: {:.10f}'.format(
                     train_likehood[-1],
                     validation_likelihood[-1]))
+            if epoch > 10 and validation_likelihood[-1] > validation_likelihood[-2]: break
             if scheduler is not None:
                 scheduler.step(-validation_likelihood[-1])
         return train_likehood, validation_likelihood

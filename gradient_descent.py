@@ -7,7 +7,8 @@ import numpy as np
 # from utils import negative_log_likelihood
 
 def train(model, device, train_loader, optimizer, X, loss_function = F.mse_loss, rescale = False):
-    error = []
+    error = 0.
+    counts = 0
     for batch_idx, x in enumerate(train_loader):
         if rescale:
             model.update_scale()
@@ -25,23 +26,31 @@ def train(model, device, train_loader, optimizer, X, loss_function = F.mse_loss,
         # print(batch_idx, model.alpha_out.weight.grad)
         # print(model[0].weight.grad)
         optimizer.step()
+        # total_norm = 0.
+        # param_norm = model.A.grad.detach().norm(2)
+        # total_norm += param_norm** 2
+        # total_norm = total_norm ** (1. / 2)
+        # print(total_norm)
 
 
         # print(batch_idx, model.negative_log_likelihood(x))
-        error.append(loss)
-    error = torch.tensor(error)
-    return torch.mean(error)
+        error+= loss.detach().cpu().numpy()
+        counts +=1
+    error = error/counts
+    return error
 
 def validate(model, device, validation_loader, X, loss_function = F.mse_loss):
-    all_losses = []
+    error = 0.
+    counts = 0
     with torch.no_grad():
         for x in validation_loader:
             x = x.to(device)
             # test_loss = negative_log_likelihood(model, x)
             test_loss = model.lossfunc(x)
-            all_losses.append(test_loss)
+            error += test_loss.detach().cpu().numpy()
+            counts += 1
 
-    all_losses = torch.tensor(all_losses)
-    return  torch.mean(all_losses)
+    error = error / counts
+    return error
 
 

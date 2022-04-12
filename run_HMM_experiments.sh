@@ -1,8 +1,10 @@
-for n in 10 100 1000
+for n in 100 500 1000
 do
-  for r in 5 10 20 40
+  for noi in 0 0.1 1
   do
-    python HMM_experiments.py --method LSTM --LSTM_epochs 100 --hmm_rank $r --hankel_epochs 100 --fine_tune_epochs 100 --N $n --new_test_data
-    python HMM_experiments.py --method WFA --LSTM_epochs 100 --hmm_rank $r --hankel_epochs 100 --fine_tune_epochs 100 --N $n --load_test_data
+    for seed in 1 2 3 4 5 6 7 8 9 10
+    do
+      python HMM_experiments.py --method LSTM --LSTM_epochs 100 --hmm_rank 10 --hankel_epochs 100 --fine_tune_epochs 100 --N $n --load_test_data --noise $noi --seed $seed
+    done
   done
 done
