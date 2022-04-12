@@ -18,24 +18,37 @@ from utils import gen_hmm_parameters
 torch.set_printoptions(profile="full")
 class density_wfa_finetune(nn.Module):
 
-    def __init__(self, density_wfa, device = device, double_pre = True, nn_transition = False, GD_linear_transition = False):
+    def __init__(self, density_wfa = None, hankel = None, device = device, double_pre = True, nn_transition = False, GD_linear_transition = False, init_std = 0.1):
         super().__init__()
 
         self.device = device
-
-        self.nade_layers = density_wfa.nade_layers
-        self.mu_out = density_wfa.mu_out.requires_grad_(True)
-        self.sig_out = density_wfa.sig_out.requires_grad_(True)
-        self.alpha_out = density_wfa.alpha_out.requires_grad_(True)
-        self.encoder_1 = density_wfa.encoder_1.requires_grad_(True)
-        self.encoder_2 = density_wfa.encoder_2.requires_grad_(True)
+        if hankel is not None:
+            self.nade_layers = hankel.nade_layers
+            self.mu_out = hankel.mu_out.requires_grad_(True)
+            self.sig_out = hankel.sig_out.requires_grad_(True)
+            self.alpha_out = hankel.alpha_out.requires_grad_(True)
+            self.encoder_1 = hankel.encoder_1.requires_grad_(True)
+            self.encoder_2 = hankel.encoder_2.requires_grad_(True)
+            core_shape = hankel.core_list[1].shape
+            tmp_core = torch.normal(0, init_std, core_shape).to(device)
+            self.A = nn.Parameter(tmp_core.clone().float().requires_grad_(True))
+            tmp_init = torch.normal(0, init_std, [hankel.core_list[1].shape[0]]).to(device)
+            self.init_w = tmp_init.requires_grad_(True)
+        else:
+            self.nade_layers = density_wfa.nade_layers
+            self.mu_out = density_wfa.mu_out.requires_grad_(True)
+            self.sig_out = density_wfa.sig_out.requires_grad_(True)
+            self.alpha_out = density_wfa.alpha_out.requires_grad_(True)
+            self.encoder_1 = density_wfa.encoder_1.requires_grad_(True)
+            self.encoder_2 = density_wfa.encoder_2.requires_grad_(True)
+            self.A = nn.Parameter(density_wfa.A.requires_grad_(True))
+            self.init_w = density_wfa.init_w.requires_grad_(True)
         self.GD_linear_transition = GD_linear_transition
         self.nn_transition = nn_transition
-        self.A = nn.Parameter(density_wfa.A.requires_grad_(True))
         # self.batchnorm = nn.BatchNorm1d(self.A.shape[-1])
         if nn_transition or GD_linear_transition:
             self.tran_activation = density_wfa.tran_activation
-        self.init_w = density_wfa.init_w.requires_grad_(True)
+
         self.scale = 1.
         self.double_pre = double_pre
         if double_pre:
@@ -70,7 +83,7 @@ class density_wfa_finetune(nn.Module):
             X = X.double().to(device)
         else:
             X = X.float().to(device)
-
+        # print(X.device)
         result = 0.
         norm = 0.
         for i in range(X.shape[2]):
@@ -82,10 +95,12 @@ class density_wfa_finetune(nn.Module):
                 tmp = torch.einsum("nd, ni, idj -> nj", encoding(self, X[:, :, i - 1]), tmp, self.A)
             # tmp = torch.tanh(tmp)
 
-            # print(A, torch.einsum("nd, idj -> nij", self.encoding(X[:, :, i-1]), self.A)[2])
+            # prit(A, torch.einsum("nd, idj -> nij", self.encoding(X[:, :, i-1]), self.A)[2])
+
             if self.nn_transition or self.GD_linear_transition:
                 tmp = self.tran_activation(tmp)
             # current_scale = self.scale**i
+
             tmp_result = phi(self, X[:, :, i].squeeze(), tmp)
             # print(tmp)
             norm += Fnorm(tmp)
@@ -101,11 +116,12 @@ class density_wfa_finetune(nn.Module):
             #     self.singular_value_clipping()
             # if epoch == epochs -1:
             #     self.update_scale()
-            train_likehood.append(train(self, self.device, train_loader, optimizer, X = train_x, rescale=False).detach().to('cpu'))
-            validation_likelihood.append(validate(self, self.device, validation_loader, X =test_x).detach().to('cpu'))
+            train_likehood.append(train(self, self.device, train_loader, optimizer, X = train_x, rescale=False))
+            validation_likelihood.append(validate(self, self.device, validation_loader, X =test_x))
             if verbose:
                 print('Epoch: ' + str(epoch) + 'Train Likelihood: {:.10f} Validate Likelihood: {:.10f}'.format(train_likehood[-1],
                                                                                                      validation_likelihood[-1]))
+            if epoch > 10 and validation_likelihood[-1] > validation_likelihood[-2]: break
             if scheduler is not None:
                 scheduler.step(-validation_likelihood[-1])
 
@@ -115,8 +131,9 @@ class density_wfa_finetune(nn.Module):
     def eval_likelihood(self, X, batch = False):
         # print(X)
         log_likelihood, hidden_norm = self(X)
+        log_likelihood = log_likelihood.detach().cpu().numpy()
         if not batch:
-            return torch.mean(log_likelihood)
+            return np.mean(log_likelihood)
         else:
             return log_likelihood
 
@@ -146,7 +163,7 @@ class density_wfa_finetune(nn.Module):
         #     sum_trace+= s[0] * inte_phi[j]
         # print(sum_trace)
         # print(self(X))
-        return -log_likelihood+ hidden_norm
+        return -log_likelihood + 0.001*hidden_norm
 
 
 
@@ -244,7 +261,7 @@ def  learn_density_WFA(data, model_params, l, plot = True, out_file_name = None,
         # train_likeli, test_likeli = dwfa.fit(train_x, test_x, train_loader, test_loader,  epochs*3, optimizer,
         #                                      scheduler=None, verbose=verbose)
 
-    dwfa_finetune = density_wfa_finetune(dwfa, double_pre=double_precision, nn_transition=nn_transition, GD_linear_transition = GD_linear_transition)
+    dwfa_finetune = density_wfa_finetune(density_wfa=dwfa, double_pre=double_precision, nn_transition=nn_transition, GD_linear_transition = GD_linear_transition)
 
     fine_tune_lr = model_params["fine_tune_lr"]
     fine_tune_epochs = model_params["fine_tune_epochs"]
