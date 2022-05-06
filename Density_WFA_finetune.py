@@ -4,9 +4,10 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 from hmmlearn import hmm
 from Dataset import *
 from torch import optim
-from neural_density_estimation import hankel_density, ground_truth_hmm, insert_bias
+from neural_density_estimation import hankel_density, ground_truth_hmm
 import pickle
 import sys
+import gen_gmmhmm_data as ggh
 import torch.distributions as D
 from torch.distributions import Normal, mixture_same_family
 from matplotlib import pyplot as plt
@@ -15,14 +16,16 @@ from utils import phi, encoding,Fnorm
 from Density_WFA import density_wfa
 from NN_learn_transition import NN_transition_WFA
 from utils import gen_hmm_parameters
-torch.set_printoptions(profile="full")
+# torch.set_printoptions(profile="full")
 class density_wfa_finetune(nn.Module):
 
-    def __init__(self, density_wfa = None, hankel = None, device = device, double_pre = True, nn_transition = False, GD_linear_transition = False, init_std = 0.1):
+    def __init__(self, density_wfa = None, hankel = None, device = device, double_pre = True, nn_transition = False, GD_linear_transition = False, init_std = 0.1, batchnorm = False):
         super().__init__()
 
         self.device = device
+        self.batchnorm = batchnorm
         if hankel is not None:
+            self.use_softmax_norm = hankel.use_softmax_norm
             self.nade_layers = hankel.nade_layers
             self.mu_out = hankel.mu_out.requires_grad_(True)
             self.sig_out = hankel.sig_out.requires_grad_(True)
@@ -35,6 +38,7 @@ class density_wfa_finetune(nn.Module):
             tmp_init = torch.normal(0, init_std, [hankel.core_list[1].shape[0]]).to(device)
             self.init_w = tmp_init.requires_grad_(True)
         else:
+            self.use_softmax_norm = density_wfa.use_softmax_norm
             self.nade_layers = density_wfa.nade_layers
             self.mu_out = density_wfa.mu_out.requires_grad_(True)
             self.sig_out = density_wfa.sig_out.requires_grad_(True)
@@ -43,6 +47,7 @@ class density_wfa_finetune(nn.Module):
             self.encoder_2 = density_wfa.encoder_2.requires_grad_(True)
             self.A = nn.Parameter(density_wfa.A.requires_grad_(True))
             self.init_w = density_wfa.init_w.requires_grad_(True)
+        self.tran_activation = nn.BatchNorm1d(self.A.shape[-1])
         self.GD_linear_transition = GD_linear_transition
         self.nn_transition = nn_transition
         # self.batchnorm = nn.BatchNorm1d(self.A.shape[-1])
@@ -57,26 +62,34 @@ class density_wfa_finetune(nn.Module):
             self.float().to(device)
 
 
-    # def update_scale(self):
-    #     max_singular_value = torch.tensor(0.).float().cuda()
-    #     A = self.A.detach()
-    #     for i in range(A.shape[1]):
-    #         # u, s, v = torch.linalg.svd(A[:, i, :])
-    #         s = torch.linalg.svdvals(A[:, i, :])
-    #         if max_singular_value < s[0]:
-    #             max_singular_value = s[0]
-    #     max_singular_value = A.shape[1] * max_singular_value
-    #     self.A.data = (A / max_singular_value)
-    #     self.scale = self.scale * max_singular_value
-    #
-    # def singular_value_clipping(self):
-    #     A = self.A.detach()
-    #     for i in range(A.shape[1]):
-    #         u, s, v = torch.linalg.svd(A[:, i, :])
-    #         s[s>1] = 1
-    #         A[:, i, :] = u @ s @ v
-    #     self.A.data = A
+    def backward(self, X):
+        if self.double_pre:
+            X = X.double().to(device)
+        else:
+            X = X.float().to(device)
+        # print(X.device)
+        result = 0.
+        norm = 0.
+        for i in np.flip(np.arange(X.shape[2])):
+            if i == X.shape[2]-1:
+                # images_repeated = images_vec.repeat(1, sequence_length)
+                tmp = self.init_w.repeat(X.shape[0], 1)
+                # tmp = torch.einsum("nd, ki, idj -> nkj", self.encoding(X[:, :, i]), tmp, self.A).squeeze()
+            else:
+                tmp = torch.einsum("nd, nj, idj -> ni", encoding(self, X[:, :, i + 1]), tmp, self.A)
+            # tmp = torch.tanh(tmp)
 
+            # prit(A, torch.einsum("nd, idj -> nij", self.encoding(X[:, :, i-1]), self.A)[2])
+
+            if self.nn_transition or self.GD_linear_transition:
+                tmp = self.tran_activation(tmp)
+            # current_scale = self.scale**i
+
+            tmp_result = phi(self, X[:, :, i], tmp)
+            # print(tmp)
+            norm += Fnorm(tmp)
+            result = result + tmp_result
+        return result, norm
 
     def forward(self, X):
         if self.double_pre:
@@ -90,19 +103,32 @@ class density_wfa_finetune(nn.Module):
             if i == 0:
                 # images_repeated = images_vec.repeat(1, sequence_length)
                 tmp = self.init_w.repeat(X.shape[0], 1)
+                if self.use_softmax_norm:
+                    tmp = torch.softmax(tmp, dim  = 1)
                 # tmp = torch.einsum("nd, ki, idj -> nkj", self.encoding(X[:, :, i]), tmp, self.A).squeeze()
             else:
-                tmp = torch.einsum("nd, ni, idj -> nj", encoding(self, X[:, :, i - 1]), tmp, self.A)
+                tran = self.A
+                if self.use_softmax_norm:
+                    tran = torch.softmax(self.A, dim = 2)
+                tmp = torch.einsum("nd, ni, idj -> nj", encoding(self, X[:, :, i - 1]), tmp, tran)
             # tmp = torch.tanh(tmp)
+            if self.batchnorm:
+                tmp = self.tran_activation(tmp)
+            # print(tmp)
 
             # prit(A, torch.einsum("nd, idj -> nij", self.encoding(X[:, :, i-1]), self.A)[2])
 
-            if self.nn_transition or self.GD_linear_transition:
-                tmp = self.tran_activation(tmp)
+            # if self.nn_transition or self.GD_linear_transition:
+            #     tmp = self.tran_activation(tmp)
             # current_scale = self.scale**i
+            # if i == 1:
+            #     print(tmp)
+            #     print(encoding(self, X[:, :, i - 1]))
+            # print(i, X[0, :, i], tmp.shape)
+            # print(i)
+            # print(tmp[0])
+            tmp_result = phi(self, X[:, :, i], tmp)
 
-            tmp_result = phi(self, X[:, :, i].squeeze(), tmp)
-            # print(tmp)
             norm += Fnorm(tmp)
             result = result + tmp_result
         return result, norm
@@ -121,7 +147,11 @@ class density_wfa_finetune(nn.Module):
             if verbose:
                 print('Epoch: ' + str(epoch) + 'Train Likelihood: {:.10f} Validate Likelihood: {:.10f}'.format(train_likehood[-1],
                                                                                                      validation_likelihood[-1]))
-            if epoch > 10 and validation_likelihood[-1] > validation_likelihood[-2]: break
+            if epoch > 5 and validation_likelihood[-1] > validation_likelihood[-2]:
+                count += 1
+                for g in optimizer.param_groups:
+                    g['lr'] /= 2
+                if count > 20: break
             if scheduler is not None:
                 scheduler.step(-validation_likelihood[-1])
 
@@ -146,25 +176,16 @@ class density_wfa_finetune(nn.Module):
 
     def lossfunc(self, X):
         log_likelihood, hidden_norm = self(X)
+        # backward_likelihood, backward_norm = self.backward(X)
         log_likelihood = torch.mean(log_likelihood)
-        hidden_norm = torch.mean(hidden_norm)
-        # if self.double_pre:
-        #     X = X.double().cuda()
-        # else:
-        #     X = X.float().cuda()
-        # inte_phi = self.mote_carlo_phi(X)
-
+        # backward_likelihood = torch.mean(backward_likelihood)
         # hidden_norm = torch.mean(hidden_norm)
-        # sum_trace = torch.tensor(0.).cuda()
-        # for j in range(self.A.shape[1]):
-        #     # sum_trace += torch.sqrt(torch.trace(self.A[:, j, :]) ** 2)
-        #     s = torch.linalg.svdvals(self.A[:, j, :])
-        #     # print(s[0], inte_phi[j])
-        #     sum_trace+= s[0] * inte_phi[j]
-        # print(sum_trace)
+        # sum_trace = 0.
+        # for i in range(1, self.length):
+        #     for j in range(self.core_list[i].shape[1]):
+        #         sum_trace += torch.sqrt(torch.trace(self.core_list[i][:, j, :]) ** 2)
         # print(self(X))
-        return -log_likelihood + 0.001*hidden_norm
-
+        return -log_likelihood #+ 0.1* hidden_norm#+ (backward_likelihood - log_likelihood) ** 2
 
 
 def  learn_density_WFA(data, model_params, l, plot = True, out_file_name = None, load_WFA = False, load_hankel = False, singular_clip_interval = 10, file_path = None):
@@ -177,11 +198,12 @@ def  learn_density_WFA(data, model_params, l, plot = True, out_file_name = None,
     lr, epochs, batch_size, double_precision = model_params['lr'], model_params['epochs'], model_params['batch_size'], model_params['double_precision']
     d, xd, r, mixture_n = model_params['d'], model_params['xd'], model_params['r'], model_params['mixture_n']
     nn_transition = model_params['nn_transition']
+    use_softmax_norm = model_params['use_softmax_norm']
     GD_linear_transition = model_params['GD_linear_transition']
     verbose = model_params['verbose']
     generator_params = {'batch_size': batch_size,
-                        'shuffle': False,
-                        'num_workers': 2}
+                        'shuffle': True,
+                        'num_workers': 0}
 
     if not load_WFA:
         if load_hankel:
@@ -194,12 +216,12 @@ def  learn_density_WFA(data, model_params, l, plot = True, out_file_name = None,
                 L = Ls[k]
                 train_x = data[data_label[k][0]]
                 test_x = data[data_label[k][1]]
-                print(data_label[k][0])
+                print(data_label[k][0], train_x.shape)
                 if k == 0:
-                    hd = hankel_density(d, xd, r, mixture_number=mixture_n, L=L, double_pre=double_precision, nn_transition=nn_transition, GD_linear_transition=GD_linear_transition).cuda(device)
+                    hd = hankel_density(d, xd, r, mixture_number=mixture_n, L=L, double_pre=double_precision, nn_transition=nn_transition, GD_linear_transition=GD_linear_transition, use_softmax_norm=use_softmax_norm).cuda(device)
                 else:
                     hd = hankel_density(d, xd, r, mixture_number=mixture_n, L=L, double_pre=double_precision,
-                                        previous_hd=hd, nn_transition=nn_transition, GD_linear_transition = GD_linear_transition).cuda(device)
+                                        previous_hd=hd, nn_transition=nn_transition, GD_linear_transition = GD_linear_transition, use_softmax_norm=use_softmax_norm).cuda(device)
                 train_data = Dataset(data=[train_x])
                 test_data = Dataset(data=[test_x])
 
@@ -219,7 +241,7 @@ def  learn_density_WFA(data, model_params, l, plot = True, out_file_name = None,
                 hds.append(hd)
 
         # dwfa = density_wfa(hds[0], hds[1], hds[2], double_pre=double_precision)
-        if nn_transition or GD_linear_transition:
+        if nn_transition or GD_linear_transition or use_softmax_norm:
             dwfa = NN_transition_WFA(hds[0], hds[1], hds[2], double_pre=double_precision, linear_transition= GD_linear_transition)
             train_x = data[data_label[-1][0]]
             test_x = data[data_label[-1][1]]
@@ -228,10 +250,11 @@ def  learn_density_WFA(data, model_params, l, plot = True, out_file_name = None,
             train_loader = torch.utils.data.DataLoader(train_data, **generator_params)
             test_loader = torch.utils.data.DataLoader(test_data, **generator_params)
 
-            optimizer = optim.Adam(dwfa.parameters(), lr=lr/2, amsgrad=True)
-            train_likeli, test_likeli = dwfa.fit(train_x, test_x, train_loader, test_loader, epochs*2, optimizer,
+            optimizer = optim.Adam(dwfa.parameters(), lr=model_params["regression_lr"], amsgrad=True)
+            train_likeli, test_likeli = dwfa.fit(train_x, test_x, train_loader, test_loader, model_params["regression_epochs"], optimizer,
                                                  scheduler=None, verbose=verbose)
         else:
+            print('warnning: density_wfa function is defected!')
             dwfa = density_wfa(hds[0], hds[1], hds[2], double_pre=double_precision)
 
         if out_file_name is not None:
@@ -244,22 +267,6 @@ def  learn_density_WFA(data, model_params, l, plot = True, out_file_name = None,
     else:
         outfile = open(out_file_name, 'rb')
         dwfa = pickle.load(outfile)
-        # outfile.close()
-        #
-        #
-        # # dwfa = density_wfa(hds[0], hds[1], hds[2], double_pre=double_precision)
-        #
-        # dwfa = NN_transition_WFA(hds[0], hds[1], hds[2], double_pre=double_precision)
-        # train_x = data[data_label[-1][0]]
-        # test_x = data[data_label[-1][1]]
-        # train_data = Dataset(data=[train_x])
-        # test_data = Dataset(data=[test_x])
-        # train_loader = torch.utils.data.DataLoader(train_data, **generator_params)
-        # test_loader = torch.utils.data.DataLoader(test_data, **generator_params)
-        #
-        # optimizer = optim.Adam(dwfa.parameters(), lr=lr/2, amsgrad=True)
-        # train_likeli, test_likeli = dwfa.fit(train_x, test_x, train_loader, test_loader,  epochs*3, optimizer,
-        #                                      scheduler=None, verbose=verbose)
 
     dwfa_finetune = density_wfa_finetune(density_wfa=dwfa, double_pre=double_precision, nn_transition=nn_transition, GD_linear_transition = GD_linear_transition)
 
@@ -277,7 +284,7 @@ def  learn_density_WFA(data, model_params, l, plot = True, out_file_name = None,
         train_loader = torch.utils.data.DataLoader(train_x, **generator_params)
         test_loader = torch.utils.data.DataLoader(test_x, **generator_params)
 
-        optimizer = optim.Adam(dwfa_finetune.parameters(), lr=fine_tune_lr, amsgrad=True)
+        optimizer = optim.Adam(dwfa_finetune.parameters(), lr=fine_tune_lr/2, amsgrad=True)
         train_likeli, test_likeli = dwfa_finetune.fit(train_x, test_x, train_loader, test_loader, fine_tune_epochs,
                                                       optimizer, scheduler=None,
                                                       verbose=verbose, singular_clip_interval = singular_clip_interval)
@@ -294,39 +301,34 @@ def  learn_density_WFA(data, model_params, l, plot = True, out_file_name = None,
 if __name__ == '__main__':
     load = False
     data_label = [['train_l', 'test_l'], ['train_2l', 'test_2l'], ['train_2l1', 'test_2l1']]
-    N = 100  # number of training samples
-    d = 3  # input encoder output dimension
+    N = 1000  # number of training samples
+    d = 1  # input encoder output dimension
     xd = 1  # input dimension
     r = 3  # rank/number of mixtures
     l = 3  # length in trianning (l, 2l, 2l+1)
     Ls = [l, 2 * l, 2 * l + 1]
+    np.random.seed(1993)
     mixture_n = r
 
     model_params = {
-        'd':1,
-        'xd': 1,
+        'd':d,
+        'xd': xd,
         'r': r,
         'mixture_n': mixture_n,
-        'lr': 0.01,
-        'epochs': 10,
+        'lr': 0.005,
+        'epochs': 1,
         'batch_size': 256,
-        'fine_tune_epochs': 10,
-        'fine_tune_lr': 0.001,
+        'fine_tune_epochs': 1,
+        'regression_lr':0.001,
+        'regression_epochs':1,
+        'fine_tune_lr': 0.002,
         'double_precision':False,
         'verbose': True,
         'nn_transition': False,
-        'GD_linear_transition': False
+        'GD_linear_transition': False,
+        'use_softmax_norm': True
     }
-    hmmmodel = hmm.GaussianHMM(n_components=r, covariance_type="full")
-    hmmmodel.startprob_, hmmmodel.transmat_, hmmmodel.means_, hmmmodel.covars_ = gen_hmm_parameters(r)
-
-
-    # hmmmodel.startprob_ = np.array([0.6, 0.3, 0.1])
-    # hmmmodel.transmat_ = np.array([[0.7, 0.2, 0.1],
-    #                             [0.3, 0.5, 0.2],
-    #                             [0.3, 0.3, 0.4]])
-    # hmmmodel.means_ = np.array([[0.0], [3.0], [5.0]])
-    # hmmmodel.covars_ = np.tile(np.identity(1), (3, 1, 1))
+    train_x, test_x, hmmmodel = ggh.gen_gmmhmm_data(N=1, xd=xd, L=l, r = r)
 
     DATA = {}
 
@@ -346,10 +348,10 @@ if __name__ == '__main__':
         DATA[data_label[k][1]] = test_x
 
 
-    dwfa_finetune = learn_density_WFA(DATA, model_params, l)
+    dwfa_finetune = learn_density_WFA(DATA, model_params, l, plot=False)
 
 
-    ls = [3, 4, 5, 6, 7, 8, 9, 10]
+    ls = [3, 4, 5, 6, 7, 8, 9, 10, 50, 100, 200]
     for l in ls:
         train_x = np.zeros([N, xd, 2*l])
         # print(2*l)
@@ -361,7 +363,7 @@ if __name__ == '__main__':
 
         likelihood = dwfa_finetune.eval_likelihood(train_x)
         print("Length" + str(2 * l) + "result is:")
-        print("Model output: "+str(torch.mean(likelihood)) + "Ground truth: " + str( train_ground_truth))
+        print("Model output: "+str(np.mean(likelihood)) + "Ground truth: " + str( train_ground_truth))
 
 
 

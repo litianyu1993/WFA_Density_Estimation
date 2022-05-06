@@ -5,7 +5,7 @@ from hmmlearn import hmm
 from Dataset import *
 from gradient_descent import train, validate
 from torch import optim
-from neural_density_estimation import hankel_density, ground_truth_hmm, insert_bias
+from neural_density_estimation import hankel_density, ground_truth_hmm
 import pickle
 import torch.distributions as D
 from torch.distributions import Normal, mixture_same_family
@@ -23,16 +23,16 @@ class RNADE_RNN(nn.Module):
         self.output_size = parameters['output_size']
         self.device = parameters['device']
 
-        print(self.input_size, self.RNN_hidden_size, self.RNN_num_layers)
+        print('here', self.input_size, self.RNN_hidden_size, self.RNN_num_layers)
         self.lstm = nn.LSTM(input_size=self.input_size, hidden_size=self.RNN_hidden_size, num_layers=self.RNN_num_layers, batch_first=True)
-
+        self.tran_activation = nn.BatchNorm1d(self.RNN_hidden_size)
         # nade_hid = parameters['nade_hid']
         self.mixture_number = parameters['mixture_number']
         # self.nade_layers = nn.ModuleList()
         # self.nade_hid = [self.RNN_hidden_size, nade_hid]
 
-        self.mu_out = torch.nn.Linear(self.RNN_hidden_size, self.mixture_number, bias=True)
-        self.sig_out = torch.nn.Linear(self.RNN_hidden_size, self.mixture_number, bias=True)
+        self.mu_out = torch.nn.Linear(self.RNN_hidden_size, self.mixture_number*self.input_size, bias=True)
+        self.sig_out = torch.nn.Linear(self.RNN_hidden_size, self.mixture_number*self.input_size, bias=True)
         self.alpha_out = torch.nn.Linear(self.RNN_hidden_size, self.mixture_number, bias=True)
         self.to(device)
 
@@ -43,17 +43,29 @@ class RNADE_RNN(nn.Module):
         result = 0.
         for i in range(X.shape[1]):
             x = X[:, i, :].reshape(X.shape[0], 1, X.shape[-1])
-            state = torch.relu(torch.swapaxes(prev_state[0], 0, 1))
-            mu = self.mu_out(state)
-            sig = torch.exp(self.sig_out(state))
+            state = prev_state[-1].squeeze()
+            # print(state.shape)
+            mu = self.mu_out(state).reshape(X.shape[0], -1, self.input_size)
+            sig = torch.exp(self.sig_out(state)).reshape(X.shape[0], -1, self.input_size)
             alpha = torch.softmax(self.alpha_out(state), dim=1)
+            # print(mu.shape, X.shape, sig.shape, state.shape)
+            mu = mu.reshape(mu.shape[0], -1, X.shape[-1])
+            sig = sig.reshape(mu.shape[0], -1, X.shape[-1])
             tmp = torch_mixture_gaussian(x.reshape(x.shape[0], -1), mu, sig, alpha)
             result += tmp
             output, (state_h, state_c) = self.lstm(x, prev_state)
+            # print(state_h.shape)
+            # state_h = self.tran_activation(state_h.reshape(-1, self.input_size)).reshape(1, -1, self.input_size)
+            state_h = torch.tanh(state_h)
+            state_c = torch.tanh(state_c)
             prev_state = (state_h, state_c)
             # print(output.shape, state_h.shape, state_c.shape)
 
             # print(X.shape, mu.shape, sig.shape, alpha.shape)
+            # tmp_mu = mu[0].detach().reshape(1, self.mixture_number)
+            # tmp_alpha = alpha[0].reshape(self.mixture_number)
+            # print(i, tmp_mu@tmp_alpha)
+            # print(i, mu[0].detach().reshape(self.mixture_number))
         return result
 
     def init_state(self, N):
@@ -91,7 +103,11 @@ class RNADE_RNN(nn.Module):
                 print('Epoch: ' + str(epoch) + 'Train Likelihood: {:.10f} Validate Likelihood: {:.10f}'.format(
                     train_likehood[-1],
                     validation_likelihood[-1]))
-            if epoch > 10 and validation_likelihood[-1] > validation_likelihood[-2]: break
+            if epoch > 10 and validation_likelihood[-1] > validation_likelihood[-2]:
+                count += 1
+                for g in optimizer.param_groups:
+                    g['lr'] /= 2
+                if count > 20: break
             if scheduler is not None:
                 scheduler.step(-validation_likelihood[-1])
         return train_likehood, validation_likelihood
@@ -132,16 +148,16 @@ if __name__ == '__main__':
 
     rnade_rnn =  RNADE_RNN(default_parameters)
     state_h, state_c = rnade_rnn.init_state(N=N)
-    print(train_x.shape)
+    # print(train_x.shape)
     train_x = torch.from_numpy(train_x)
-    print(rnade_rnn(train_x, (state_h, state_c)).shape)
+    # print(rnade_rnn(train_x, (state_h, state_c)).shape)
 
     train_data = Dataset(data=[train_x])
     test_data = Dataset(data=[test_x])
 
     generator_params = {'batch_size': batch_size,
                         'shuffle': False,
-                        'num_workers': 2}
+                        'num_workers': 0}
     train_loader = torch.utils.data.DataLoader(train_data, **generator_params)
     test_loader = torch.utils.data.DataLoader(test_data, **generator_params)
 

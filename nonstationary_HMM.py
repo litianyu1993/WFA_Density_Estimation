@@ -8,14 +8,16 @@ from hmmlearn import hmm
 
 class incremental_HMM(nn.Module):
 
-    def __init__(self, r):
+    def __init__(self, r, seed):
+        np.random.seed(seed)
         super().__init__()
+        # print('current rank is ', r)
         self.transition = torch.rand([r, r])
         self.transition = torch.softmax(self.transition, dim = 1)
         self.sig = torch.ones(r).reshape([1, r])
         self.init_w = torch.rand([1, r])
         self.init_w = torch.softmax(self.init_w, dim = 1)
-        self.mu_rates = (torch.arange(r)*0.1).reshape([1, r])
+        self.mu_rates = torch.ones(r).reshape([1, r])
 
 
     def torch_mixture_gaussian(self, mu, sig, h):
@@ -28,26 +30,31 @@ class incremental_HMM(nn.Module):
         # print(gmm.sample([n]))
         return gmm.sample([n])
 
-    def evalue_log_likelihood(self, X):
+    def score(self, X):
         h = self.init_w
         log_prob = 0.
-        for i in range(X.shape[2]):
-            mu = i*self.mu_rates
-            gmm = self.torch_mixture_gaussian(mu, self.sig, h)
-            log_prob += gmm.log_prob(X[:, :, i])
-            h = h @ self.transition
-        return torch.mean(log_prob)
+        # print(X.shape)
+        for i in range(X.shape[0]):
 
-    def sample(self, n, l):
-        h = self.init_w
-        samples = torch.zeros([n, 1, l])
-        for i in range(l):
-            mu = i * self.mu_rates
+            mu = (i%4)*self.mu_rates
             gmm = self.torch_mixture_gaussian(mu, self.sig, h)
-            current_sample = self.sample_from_gmm(gmm, n)
-            samples[:, :, i] = current_sample
+            log_prob += gmm.log_prob(torch.tensor(X[i, :]))
             h = h @ self.transition
-        return samples
+            # print(i, h)
+            # print(i, 'scoring', mu.reshape(1, -1)@h.reshape(-1, 1))
+        return log_prob.numpy()
+
+    def sample(self, l):
+        h = self.init_w
+        samples = torch.zeros([1, l])
+        for i in range(l):
+            mu =  (i%4) * self.mu_rates
+            gmm = self.torch_mixture_gaussian(mu, self.sig, h)
+            current_sample = self.sample_from_gmm(gmm, 1)
+            samples[:, i] = current_sample
+            h = h @ self.transition
+            # print(i,'sampling', mu.reshape(1, -1)@h.reshape(-1, 1))
+        return samples, samples
 
 def fit_gmm(X, lens, r):
     remodel = hmm.GaussianHMM(n_components=r, covariance_type="full", n_iter=100)

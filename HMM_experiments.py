@@ -2,15 +2,17 @@ import pickle
 import argparse
 import numpy as np
 import torch
+from utils import exp_parser
 from Dataset import *
 from gradient_descent import train, validate
 from torch import optim
 from RNADE_RNN import RNADE_RNN
 from Density_WFA_finetune import learn_density_WFA, density_wfa_finetune
-from neural_density_estimation import hankel_density, ground_truth_hmm, insert_bias
+from neural_density_estimation import hankel_density, ground_truth_hmm
 from matplotlib import pyplot as plt
 from hmmlearn import hmm
 import os
+from nonstationary_HMM import incremental_HMM
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def WFA_SGD(data, model_params, l, plot=True, out_file_name=None, load_WFA=False, load_hankel=False,
@@ -26,14 +28,15 @@ def WFA_SGD(data, model_params, l, plot=True, out_file_name=None, load_WFA=False
         d, xd, r, mixture_n = model_params['d'], model_params['xd'], model_params['r'], model_params['mixture_n']
         nn_transition = model_params['nn_transition']
         GD_linear_transition = model_params['GD_linear_transition']
+        use_softmax_norm  = model_params['use_softmax_norm']
         verbose = model_params['verbose']
         generator_params = {'batch_size': batch_size,
-                            'shuffle': False,
-                            'num_workers': 2}
+                            'shuffle': True,
+                            'num_workers': 0}
         hd = hankel_density(d, xd, r, mixture_number=mixture_n, L=l, double_pre=double_precision,
-                            nn_transition=nn_transition, GD_linear_transition=GD_linear_transition).cuda(device)
+                            nn_transition=nn_transition, GD_linear_transition=GD_linear_transition, use_softmax_norm = False).cuda(device)
         dwfa_finetune = density_wfa_finetune(hankel=hd, double_pre=double_precision, nn_transition=nn_transition,
-                                             GD_linear_transition=GD_linear_transition)
+                                             GD_linear_transition=GD_linear_transition, batchnorm=True)
         fine_tune_lr = model_params["fine_tune_lr"]
         fine_tune_epochs = model_params["fine_tune_epochs"]
 
@@ -58,12 +61,15 @@ def WFA_SGD(data, model_params, l, plot=True, out_file_name=None, load_WFA=False
                 plt.plot(test_likeli, label='test')
                 plt.legend()
                 plt.show()
-
+        # print(torch.softmax(dwfa_finetune.init_w, dim = 0))
+        # print(torch.softmax(dwfa_finetune.A, dim = 2))
+        # print(dwfa_finetune.mu_out.weight)
+        #print(dwfa_finetune.mu_out.bias)
         return dwfa_finetune
 
 def evaluate(model, hmmmodel, method, exp_name, r, N, fileDir,load_test = False, xd = 1):
-    ls = np.arange(1, 50)*8
-    print(ls)
+    ls = np.arange(1, 10)*8
+    # print(ls)
     test_data = {}
     if not load_test:
         for l in ls:
@@ -72,6 +78,7 @@ def evaluate(model, hmmmodel, method, exp_name, r, N, fileDir,load_test = False,
                 x, z = hmmmodel.sample(l)
                 train_x[i, :, :] = x.reshape(xd, -1)
             test_data[l] = train_x
+            print(l)
         file_name = os.path.join(fileDir, 'hmm_models', 'rank_' + str(r) + 'exp', 'test_data_N'+str(N))
         with open(file_name, 'wb') as f:
             pickle.dump(test_data, f)
@@ -79,6 +86,7 @@ def evaluate(model, hmmmodel, method, exp_name, r, N, fileDir,load_test = False,
         file_name = os.path.join(fileDir, 'hmm_models', 'rank_' + str(r) + 'exp', 'test_data_N'+str(N))
         with open(file_name, 'rb') as f:
             test_data = pickle.load(f)
+    # print(test_data[8][-1], file_name)
 
     results = {}
     results['exp_parameters'] = args
@@ -86,6 +94,7 @@ def evaluate(model, hmmmodel, method, exp_name, r, N, fileDir,load_test = False,
         train_ground_truth = ground_truth_hmm(test_data[l], hmmmodel)
         train_x = torch.tensor(test_data[l]).float()
         if method == 'WFA' or method == 'SGD_WFA':
+            print(train_x.shape)
             likelihood = model.eval_likelihood(train_x)
         else:
             likelihood = rnade_rnn.eval_likelihood(torch.swapaxes(train_x, 1, 2))
@@ -101,28 +110,9 @@ def evaluate(model, hmmmodel, method, exp_name, r, N, fileDir,load_test = False,
     return
 
 
+
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--hmm_rank', default=2, type=int, help='Rank of the HMM')
-    parser.add_argument('--method', default='WFA', help='method to use, either LSTM or WFA')
-    parser.add_argument('--L', default=3, type=int,help='length of the trajectories, WFA takes L, 2L, 2L+1, LSTM takes 2L+1')
-    parser.add_argument('--N', default= 100, type=int,help= 'number of examples to consider, WFA takes N, LSTM takes 3N')
-    parser.add_argument('--xd', default=1, type=int,help= 'dimension of the input feature')
-    parser.add_argument('--hankel_lr', default=0.01, type=float, help='hankel estimation learning rate')
-    parser.add_argument('--fine_tune_lr', default=0.001, type = float, help='WFA finetune learning rate')
-    parser.add_argument('--LSTM_lr', default=0.001, type=float, help='LSTM learning rate')
-    parser.add_argument('--hankel_epochs', default=100, type=int, help='hankel estimation epochs')
-    parser.add_argument('--fine_tune_epochs', default=100, type=int, help='WFA finetune epochs')
-    parser.add_argument('--LSTM_epochs', default=100, type=int, help='WFA finetune epochs')
-    parser.add_argument('--batch_size', default=256, type=int, help='Batch size')
-    parser.add_argument('--run_idx', default=0, type = int, help='index of the run')
-    parser.add_argument('--seed', default = 1993, type = int, help='random seed')
-    parser.add_argument('--load_test_data', dest='load_data', action='store_true')
-    parser.add_argument('--new_test_data', dest='load_data', action='store_false')
-    parser.add_argument('--noise', default=0, type = float, help='variance of the added noise')
-    parser.add_argument('--nn_transition', dest='nn_transition', action='store_true')
-    parser.add_argument('--no_nn_transition', dest='nn_transition', action='store_false')
-    parser.set_defaults(load_data=True)
+    parser = exp_parser()
     args = parser.parse_args()
     noise = args.noise
 
@@ -142,7 +132,9 @@ if __name__ == '__main__':
     lstm_epochs = args.LSTM_epochs
     hankel_epochs = args.hankel_epochs
     finetuen_epochs = args.fine_tune_epochs
+    regression_lr = args.regression_lr
     index_run = args.run_idx
+    regression_epochs = args.regression_epochs
     fileDir = os.path.dirname(os.path.realpath('__file__'))
     file_name = os.path.join(fileDir, 'hmm_models' ,'rank_'+str(r))
     exp_name = method + 'run_idx'+str (args.seed) +'N' +str(args.N)+'noise_'+str(args.noise)
@@ -151,7 +143,10 @@ if __name__ == '__main__':
 
     with open(file_name, 'rb') as f:
         hmmmodel = pickle.load(f)
+    import gen_gmmhmm_data as ggh
 
+    # train_x, test_x, hmmmodel = ggh.gen_gmmhmm_data(N=1, xd=xd, L=l, r=r, seed= args.seed)
+    hmmmodel = incremental_HMM(args.hmm_rank, seed=args.seed)
     if method == 'WFA' or method == 'SGD_WFA':
         model_params = {
             'd': 1,
@@ -167,7 +162,11 @@ if __name__ == '__main__':
             'verbose': True,
             'nn_transition': nn_trainsition,
             'GD_linear_transition': False,
+            'use_softmax_norm': True,
+            'regression_lr': regression_lr,
+            'regression_epochs':regression_epochs
         }
+        #
         data_label = [['train_l', 'test_l'], ['train_2l', 'test_2l'], ['train_2l1', 'test_2l1']]
         DATA = {}
         Ls = [l, 2*l, 2*l+1]
@@ -190,7 +189,7 @@ if __name__ == '__main__':
         else:
             model_params['epochs'] = 0
             dwfa_finetune = WFA_SGD(DATA, model_params, l, plot=False)
-        evaluate(model=dwfa_finetune, hmmmodel=hmmmodel, method=method, exp_name=exp_name, r=r, fileDir=fileDir, load_test=load_test, N = args.N)
+        evaluate(model=dwfa_finetune, hmmmodel=hmmmodel, method=method, exp_name=exp_name, r=r, fileDir=fileDir, load_test=load_test, N = args.N, xd = args.xd)
 
     elif method == 'HMM':
         print(method)
@@ -215,11 +214,14 @@ if __name__ == '__main__':
         results = {}
         results['exp_parameters'] = args
         ls = np.arange(1, 50) * 8
+        print(test_data[8].shape)
         for l in ls:
             train_ground_truth = ground_truth_hmm(test_data[l], hmmmodel)
             x = test_data[l]
+
             x = np.swapaxes(x, 1,2)
             testx = x.reshape(x.shape[0]*x.shape[1], -1)
+            print(testx.shape)
             likelihood = remodel.score(testx, lengths = np.ones(x.shape[0]).astype(int)*l)/x.shape[0]
             results[l] = {
                 'model_output': likelihood,
@@ -257,8 +259,8 @@ if __name__ == '__main__':
         test_data = Dataset(data=[test_x])
 
         generator_params = {'batch_size': batch_size,
-                            'shuffle': False,
-                            'num_workers': 2}
+                            'shuffle': True,
+                            'num_workers': 0}
         train_loader = torch.utils.data.DataLoader(train_data, **generator_params)
         test_loader = torch.utils.data.DataLoader(test_data, **generator_params)
         rnade_rnn = RNADE_RNN(default_parameters)
@@ -268,7 +270,7 @@ if __name__ == '__main__':
         train_likeli, test_likeli = rnade_rnn.fit(train_x, test_x, train_loader, test_loader, lstm_epochs, optimizer,
                                                   scheduler=None,
                                                   verbose=True)
-        evaluate(model=rnade_rnn, hmmmodel=hmmmodel, method=method, exp_name=exp_name, r=r, fileDir=fileDir, load_test=load_test, N = args.N)
+        evaluate(model=rnade_rnn, hmmmodel=hmmmodel, method=method, exp_name=exp_name, r=r, fileDir=fileDir, load_test=load_test, N = args.N, xd = args.xd)
 
 
 

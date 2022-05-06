@@ -4,7 +4,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 from hmmlearn import hmm
 from Dataset import *
 from torch import optim
-from neural_density_estimation import hankel_density, ground_truth_hmm, insert_bias
+from neural_density_estimation import hankel_density, ground_truth_hmm
 import pickle
 import torch.distributions as D
 from torch.distributions import Normal, mixture_same_family
@@ -24,12 +24,13 @@ class density_wfa(nn.Module):
         self.hankel_l = hd.core_list
         self.hankel_2l1 = h2d1.core_list
 
-        self.nade_layers = hd.nade_layers
-        self.mu_out = hd.mu_out
-        self.sig_out = hd.sig_out
-        self.alpha_out = hd.alpha_out
-        self.encoder_1 = hd.encoder_1
-        self.encoder_2 = hd.encoder_2
+        self.nade_layers = h2d1.nade_layers
+        self.mu_out = h2d1.mu_out
+        self.sig_out = h2d1.sig_out
+        self.alpha_out = h2d1.alpha_out
+        self.encoder_1 = h2d1.encoder_1
+        self.encoder_2 = h2d1.encoder_2
+
 
         self.A =torch.normal(0, init_std, [self.r, self.d, self.r]).float()
         self.init_w = torch.normal(0, init_std, [1, self.r]).float()

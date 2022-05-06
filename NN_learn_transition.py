@@ -4,7 +4,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 from hmmlearn import hmm
 from Dataset import *
 from torch import optim
-from neural_density_estimation import hankel_density, ground_truth_hmm, insert_bias
+from neural_density_estimation import hankel_density, ground_truth_hmm
 import pickle
 import torch.distributions as D
 from torch.distributions import Normal, mixture_same_family
@@ -22,41 +22,45 @@ class NN_transition_WFA(nn.Module):
         self.hankel_2l = h2d.core_list
         self.hankel_l = hd.core_list
         self.hankel_2l1 = h2d1.core_list
-        # print(self.hd.init_w.shape, self.hankel_l[0].shape, self.hankel_2l[0].shape, self.hankel_2l1[0].shape)
-        self.hankel_l[0] = nn.Parameter(torch.einsum('ij, jkl -> kl', self.hd.init_w, self.hankel_l[0]).squeeze())
-        # self.hankel_2l[0] = nn.Parameter(torch.einsum('ij, jkl -> kl', self.h2d.init_w, self.hankel_2l[0]).squeeze())
-        # self.hankel_2l1[0] = nn.Parameter(torch.einsum('ij, jkl -> kl', self.h2d1.init_w, self.hankel_2l1[0]).squeeze())
-
+        self.use_softmax_norm = hd.use_softmax_norm
         self.l = len(hd.core_list)
-        self.d = hd.core_list[0].shape[0]
-        self.r = hd.core_list[0].shape[1]
+        self.d = hd.core_list[0].shape[1]
+        print(hd.core_list[0].shape)
+        self.r = hd.core_list[0].shape[-1]
+        # print(self.hd.init_w.shape, self.hankel_l[0].shape, self.hankel_2l[0].shape, self.hankel_2l1[0].shape)
+        # self.hankel_l[0] = nn.Parameter(torch.einsum('ij, jkl -> kl', self.hd.init_w, self.hankel_l[0]).reshape(self.d, self.r))
+        # self.hankel_2l[0] = nn.Parameter(torch.einsum('ij, jkl -> kl', self.h2d.init_w, self.hankel_2l[0]).reshape(self.d, self.r))
+        # self.hankel_2l1[0] = nn.Parameter(torch.einsum('ij, jkl -> kl', self.h2d1.init_w, self.hankel_2l1[0]).reshape(self.d, self.r))
 
-        self.nade_layers = hd.nade_layers
-        self.mu_out = hd.mu_out
-        self.sig_out = hd.sig_out
-        self.alpha_out = hd.alpha_out
-        self.encoder_1 = hd.encoder_1
-        self.encoder_2 = hd.encoder_2
 
+
+        self.nade_layers = h2d1.nade_layers
+        self.mu_out = h2d1.mu_out
+        self.sig_out = h2d1.sig_out
+        self.alpha_out = h2d1.alpha_out
+        self.encoder_1 = h2d1.encoder_1
+        self.encoder_2 = h2d1.encoder_2
 
         self.device = device
         tmp_core =torch.normal(0, init_std, [self.r, self.d, self.r]).float()
         self.A = nn.Parameter(tmp_core.clone().float().requires_grad_(True))
 
 
-        self.hankel_2l = self.qr_svd(self.hankel_2l, self.l)
-        self.init_w = self.comput_initial_vecotr(self.hankel_l, self.hankel_2l)
+        # self.hankel_2l = self.qr_svd(self.hankel_2l, self.l)
+        # self.init_w = self.comput_initial_vecotr(self.hankel_l, self.hankel_2l)
+        self.init_w = h2d.init_w
         self.double_pre = double_pre
-        if double_pre:
-            self.double().to(device)
-        else:
-            self.float().to(device)
+
 
         if linear_transition:
             self.tran_activation = torch.nn.Linear(self.r, self.r, bias=False).to(device)
 
         else:
             self.tran_activation = nn.BatchNorm1d(self.A.shape[-1])
+        if double_pre:
+            self.double().to(device)
+        else:
+            self.float().to(device)
 
 
     def comput_initial_vecotr(self, hl, h2l):
@@ -85,16 +89,21 @@ class NN_transition_WFA(nn.Module):
 
         for i in range(X.shape[2]):
             if i == 0:
-                tmp = self.h2d.init_w
+                tmp = self.h2d.init_w.repeat(X.shape[0], 1)
+                if self.use_softmax_norm:
+                    tmp = torch.softmax(tmp, dim=1)
+            # print(tmp.shape, encoding(self, X[:, :, i - 1]).shape, self.A.shape)
+            tmpA = self.A
+            tmp_core = self.hankel_2l[i - 1]
+            if self.use_softmax_norm:
+                tmpA = torch.softmax(self.A, dim=2)
+                tmp_core = torch.softmax(self.hankel_2l[i - 1], dim=2)
             if i == self.l:
-                tmp = torch.einsum("nd, ni, idj -> nj", encoding(self, X[:, :, i - 1]), tmp, self.A)
-                # tmp = torch.tanh(tmp)
-                # print(tmp.shape)
-                tmp = self.tran_activation(tmp)
+                tmp = torch.einsum("nd, ni, idj -> nj", encoding(self, X[:, :, i - 1]), tmp, tmpA)
             else:
-                tmp = torch.einsum("nd, ni, idj -> nj", encoding(self, X[:, :, i - 1]), tmp, self.hankel_2l[i - 1])
-
-            tmp_result = phi(self, X[:, :, i].squeeze(), tmp)
+                tmp = torch.einsum("nd, ni, idj -> nj", encoding(self, X[:, :, i - 1]), tmp, tmp_core)
+            # print(X[:, :, i].squeeze().shape, tmp.shape)
+            tmp_result = phi(self, X[:, :, i], tmp)
             result = result + tmp_result
         return result
 
@@ -111,14 +120,17 @@ class NN_transition_WFA(nn.Module):
         validation_likelihood = []
         count = 0
         for epoch in range(epochs):
-            train_likehood.append(train(self, self.device, train_loader, optimizer, X=train_x).detach().to('cpu'))
-            validation_likelihood.append(validate(self, self.device, validation_loader, X=test_x).detach().to('cpu'))
+            train_likehood.append(train(self, self.device, train_loader, optimizer, X=train_x))
+            validation_likelihood.append(validate(self, self.device, validation_loader, X=test_x))
             if verbose:
                 print('Epoch: ' + str(epoch) + 'Train Likelihood: {:.10f} Validate Likelihood: {:.10f}'.format(
                     train_likehood[-1],
                     validation_likelihood[-1]))
             if scheduler is not None:
                 scheduler.step(-validation_likelihood[-1])
+            if epoch > 5 and validation_likelihood[-1] > validation_likelihood[-2]:
+                for g in optimizer.param_groups:
+                    g['lr'] /= 2
 
         # self.core_list[0] = nn.Parameter(torch.einsum('ij, jkl -> kl', self.init_w, self.core_list[0]).squeeze())
         return train_likehood, validation_likelihood
@@ -135,7 +147,9 @@ class NN_transition_WFA(nn.Module):
             #     tensor[i+1].data  = torch.einsum('ij, jkl -> ikl', tmp, tensor[i+1])
             # else:
             core = tensor[i].reshape(-1, tensor[i].shape[-1])
+            print(core.shape, tensor[i].shape)
             B, C = torch.linalg.qr(core.transpose(0, 1).contiguous(), mode = 'complete')
+
             tensor[i].data = C.transpose(0, 1).contiguous().reshape([r, d, r])
             tmp = B.transpose(0, 1).contiguous()
             if i != l-1:
