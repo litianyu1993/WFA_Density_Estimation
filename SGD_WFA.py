@@ -63,6 +63,7 @@ class density_wfa(nn.Module):
             if self.use_batchnorm:
                 # tmp = torch.softmax(tmp, dim = 1)
                 tmp = self.batchnrom(tmp)
+
             # print(self.init_w)
             # print(i, 0, tmp, torch.any(torch.isnan(tmp)))
             tmp_result = phi(self, X[:, :, i], torch.softmax(tmp, dim  =1), prediction)
@@ -109,16 +110,22 @@ class density_wfa(nn.Module):
         return -log_likelihood
 
 
-    def bootstrapping(self, X):
-        tmp_x = X[:, :, :1]
-        for i in range(1, X.shape[-1]):
-            # print(tmp_x.shape)
-            tmp_y = X[:, :, i]
+    def bootstrapping(self, X, delay = 50):
+        self.eval()
+        tmp_x = X[0, :, :delay].reshape(1, X.shape[1], -1)
+
+        mape, mse = [], []
+        for i in range(1, X.shape[-1]-delay - 1):
+
+            # tmp_x = tmp_x.reshape(, tmp_x.shape[0], -1)
+            tmp_y = X[0, :, delay+i]
             pred_mu, pred_sig = self(tmp_x, prediction=True)
             pred_mu = pred_mu.reshape(tmp_y.shape)
-            tmp_x = torch.cat((tmp_x, pred_mu.reshape(X.shape[0], X.shape[1], -1)), dim = 2)
-
+            tmp_x = torch.cat((tmp_x, pred_mu.reshape(1, X.shape[1], -1).detach()), dim = 2)
+            mape.append( MAPE(pred_mu, tmp_y).detach().cpu().numpy())
+            mse.append(torch.mean((pred_mu - tmp_y)**2).detach().cpu().numpy())
             print(i,  MAPE(pred_mu, tmp_y), torch.mean((pred_mu - tmp_y)**2))
+        return mape, mse
 
     def eval_prediction(self, X, y):
         if self.double_pre:

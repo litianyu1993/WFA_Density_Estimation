@@ -22,6 +22,7 @@ class RNADE_RNN(nn.Module):
         self.RNN_num_layers = parameters['RNN_num_layers']
         self.output_size = parameters['output_size']
         self.device = parameters['device']
+        self.initial_bias = parameters['initial_bias']
 
         print('here', self.input_size, self.RNN_hidden_size, self.RNN_num_layers)
         self.lstm = nn.LSTM(input_size=self.input_size, hidden_size=self.RNN_hidden_size, num_layers=self.RNN_num_layers, batch_first=True)
@@ -43,21 +44,24 @@ class RNADE_RNN(nn.Module):
         result = 0.
         for i in range(X.shape[1]):
             x = X[:, i, :].reshape(X.shape[0], 1, X.shape[-1])
-            state = prev_state[-1].squeeze()
+            state = self.tran_activation(prev_state[-1].squeeze())
             # print(state.shape)
             mu = self.mu_out(state).reshape(X.shape[0], -1, self.input_size)
             sig = torch.exp(self.sig_out(state)).reshape(X.shape[0], -1, self.input_size)
             alpha = torch.softmax(self.alpha_out(state), dim=1)
             # print(mu.shape, X.shape, sig.shape, state.shape)
             mu = mu.reshape(mu.shape[0], -1, X.shape[-1])
+            if self.initial_bias is not None:
+                for i in range(mu.shape[-1]):
+                    mu[:, :, i] = mu[:, :, i] + self.initial_bias[i]
             sig = sig.reshape(mu.shape[0], -1, X.shape[-1])
             tmp = torch_mixture_gaussian(x.reshape(x.shape[0], -1), mu, sig, alpha)
             result += tmp
             output, (state_h, state_c) = self.lstm(x, prev_state)
             # print(state_h.shape)
             # state_h = self.tran_activation(state_h.reshape(-1, self.input_size)).reshape(1, -1, self.input_size)
-            state_h = torch.tanh(state_h)
-            state_c = torch.tanh(state_c)
+            # state_h = torch.tanh(state_h)
+            # state_c = torch.tanh(state_c)
             prev_state = (state_h, state_c)
             # print(output.shape, state_h.shape, state_c.shape)
 

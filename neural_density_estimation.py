@@ -52,9 +52,6 @@ class hankel_density(nn.Module):
         tmp_core_back = torch.normal(0, init_std, [1, r])
         self.init_w_back = nn.Parameter(tmp_core_back.clone().float().requires_grad_(True))
         for i in range(L):
-            # if i == 0:
-            #     tmp_core = nn.Parameter(torch.normal(0, init_std, [d, r]).clone().float().requires_grad_(True))
-            # else:
             tmp_core = torch.normal(0., init_std, [r, d, r])
             tmp_core = nn.Parameter(tmp_core.clone().float().requires_grad_(True))
             self.core_list.append(tmp_core)
@@ -69,6 +66,7 @@ class hankel_density(nn.Module):
         self.nade_hid = nade_hid
         # print(nade_hid)
         # if
+
         if previous_hd is None:
             # tmp_core = torch.normal(0, init_std, [self.nade_hid[-1], mixture_number, xd])
             # self.mu_out = nn.Parameter(tmp_core.clone().float().requires_grad_(True))
@@ -78,7 +76,7 @@ class hankel_density(nn.Module):
             # self.sig_out = nn.Parameter(tmp_core.clone().float().requires_grad_(True))
             # self.sig_out_bias = nn.Parameter(
             #     torch.normal(0, init_std, [mixture_number, xd]).float().requires_grad_(True))
-
+            self.batchnrom = nn.BatchNorm1d(r)
             self.mu_out = torch.nn.Linear(self.nade_hid[-1], mixture_number*xd, bias=True)
             self.sig_out = torch.nn.Linear(self.nade_hid[-1], mixture_number*xd, bias=True)
             self.alpha_out = torch.nn.Linear(self.nade_hid[-1], mixture_number, bias=True)
@@ -92,7 +90,8 @@ class hankel_density(nn.Module):
         else:
             for i in range(len(previous_hd.core_list)):
                 self.core_list[i] = previous_hd.core_list[i].requires_grad_(True)
-
+            self.batchnrom = previous_hd.batchnrom
+            self.batchnrom.requires_grad = train_encoder_termination
             self.init_w = previous_hd.init_w.requires_grad_(True)
             self.init_w.requires_grad = train_encoder_termination
             self.mu_out = previous_hd.mu_out
@@ -158,21 +157,17 @@ class hankel_density(nn.Module):
         for i in range(self.length):
             if i == 0:
                 tmp = self.init_w.repeat(X.shape[0], 1)
-                if self.use_softmax_norm:
-                    tmp = torch.softmax(tmp, dim = 1)
-
-
-                # print(i, tmp.shape)
+                # if self.use_softmax_norm:
+                #     tmp = torch.softmax(tmp, dim = 1)
             else:
                 # print(i, tmp.shape, self.core_list[i - 1].shape, self.core_list[0].shape)
                 tmp_A = self.core_list[i - 1]
-                if self.use_softmax_norm:
-                    tmp_A = torch.softmax(self.core_list[i - 1], dim  = 2)
-                # print(encoding(self, X[:, :, i - 1]).shape, tmp_A.shape)
-
+                # if self.use_softmax_norm:
+                #     tmp_A = torch.softmax(self.core_list[i - 1], dim  = 2)
                 tmp = torch.einsum("nd, ni, idj -> nj", encoding(self, X[:, :, i - 1]), tmp, tmp_A)
-            # print(i)
-            tmp_result = phi(self, X[:, :, i], tmp)
+                if self.use_softmax_norm:
+                    tmp = self.batchnrom(tmp)
+            tmp_result = phi(self, X[:, :, i], torch.softmax(tmp, dim = 1))
             norm += Fnorm(tmp)
             result = result + tmp_result
         return result, norm

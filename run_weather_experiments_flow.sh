@@ -1,6 +1,6 @@
-for n in 1000 10000
+for n in 20000
 do
-  for seed in 1 2 3
+  for seed in 1
     do
       for method in flow
         do

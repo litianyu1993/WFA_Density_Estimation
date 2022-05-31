@@ -8,6 +8,7 @@ from SGD_WFA import learn_SGD_WFA
 from gradient_descent import train, validate
 from torch import optim
 from RNADE_RNN import RNADE_RNN
+from matplotlib import pyplot as plt
 from Density_WFA_finetune import learn_density_WFA, density_wfa_finetune
 from neural_density_estimation import hankel_density, ground_truth_hmm
 from matplotlib import pyplot as plt
@@ -27,6 +28,10 @@ def standardize(X, mean = None, std = None):
 
 def difference(X):
     print(X.shape)
+    min_X = np.min(X, axis = 0)
+
+    X = (X - min_X)+1
+    X = np.log(X)
     for i in range(len(X)-1):
         X[i] = X[i+1] - X[i]
     return X[:-1]
@@ -126,32 +131,51 @@ if __name__ == '__main__':
     data_folder =  os.path.join(fileDir, args.exp_data)
     exp_folder = os.path.join(data_folder, 'rank_'+str(r))
     # file_name = os.path.join(fileDir, args.exp_data ,'rank_'+str(r))
+    if not os.path.exists(exp_folder):
+        os.makedirs(exp_folder)
     exp_name = method + 'run_idx'+str (args.seed) +'N' +str(args.N)+'noise_'+str(args.noise)+'L_'+str(args.L)
     print(exp_name)
     if args.exp_data == 'weather':
-        if method == 'LSTM' or method == 'Transformer':
-            N = 3*N
-            args.N = N
-            l = 2*l+1
-        print(N)
         X = np.genfromtxt(os.path.join(fileDir, args.exp_data, 'NEweather_data.csv'), delimiter=',')
+
         if N > X.shape[0] - 1000:
             N = X.shape[0]-1000
             args.N = N
         X = X[:args.N]
+        print(X.shape)
         test_X = np.genfromtxt(os.path.join(fileDir, args.exp_data, 'NEweather_data.csv'), delimiter=',')[args.N:args.N + 1000]
-        last_x = X[-1]
-        last_test_x = test_X[-1]
-        print(X[1])
-        X = difference(X)
-        X = recover(X, last_x)
-        test_X = difference(test_X)
-        test_X = recover(test_X, last_test_x)
+    elif args.exp_data == 'movingSquares':
+        data = np.genfromtxt(os.path.join(fileDir, args.exp_data, 'movingSquares.data'), delimiter=' ')
+        X = data[170000: 170000 + args.N]
+        print(X.shape)
+        test_X = data[-1000:]
+    elif args.exp_data == 'Elec2':
+        data = np.genfromtxt(os.path.join(fileDir, args.exp_data, 'elec2_data.dat'),
+                             skip_header=1,
+                             skip_footer=1,
+                             names=True,
+                             dtype=float,
+                             delimiter=' ')
+        new_data = []
+        for i in range(len(data)):
+            x = []
+            for j in range(len(data[i])):
+                x.append(data[i][j])
+            new_data.append(x)
+        new_data = np.asarray(new_data)
+        new_data = difference(new_data)
+        if N > new_data.shape[0] - 1000:
+            N = new_data.shape[0]-1000
+            args.N = N
+        X = new_data[:args.N]
+        print(X.shape)
+        test_X = new_data[args.N:args.N + 1000]
 
-
-        print(autoregressive_regression(X, test_X))
-        bias = torch.tensor(np.mean(test_X, axis = 0))
-        xd = X.shape[-1]
+    # X = difference(X)
+    # test_X = difference(test_X)
+    auto_MAPE, auto_MSE = autoregressive_regression(X, test_X)
+    bias = torch.tensor(np.mean(X, axis = 0))
+    xd = X.shape[-1]
     if method == 'WFA' or method == 'SGD_WFA':
         model_params = {
             'd': xd,
@@ -170,7 +194,7 @@ if __name__ == '__main__':
             'GD_linear_transition': False,
             'use_softmax_norm': not args.wfa_sgd_batchnorm,
             'regression_lr': regression_lr,
-            'regression_epochs':regression_epochs,
+            'regression_epochs': regression_epochs,
             'use_batch_norm': args.wfa_sgd_batchnorm
         }
         #
@@ -183,6 +207,7 @@ if __name__ == '__main__':
             test_x = sliding_window(test_X, L)
             train_x = torch.tensor(train_x).float()
             test_x = torch.tensor(test_x).float()
+            print(train_x.shape, test_x.shape)
             DATA[data_label[k][0]] = train_x
             DATA[data_label[k][1]] = test_x
         if method == 'WFA':
@@ -190,15 +215,30 @@ if __name__ == '__main__':
         else:
             model_params['epochs'] = 0
             dwfa_finetune = learn_SGD_WFA(model_params, DATA, initial_bias=bias)
+
         model_name = os.path.join(exp_folder, exp_name + 'model')
+
+
         torch.save(dwfa_finetune.state_dict(), model_name)
         evaluate(model=dwfa_finetune, X= test_X, method=method, exp_name=exp_name, r=r, fileDir=exp_folder, load_test=load_test, N = args.N)
+
         test_x = torch.tensor(sliding_window(test_X, 500)).to(device)
-        print(test_x.shape)
+        # print(test_x.shape)
         print(dwfa_finetune.eval_prediction(test_x[:, :, :-1],test_x[:, :, -1]))
-        dwfa_finetune.bootstrapping(test_x)
+        wfa_mape, wfa_mse = dwfa_finetune.bootstrapping(test_x)
+        plt.plot(wfa_mape, label = 'wfa')
+        plt.plot(auto_MAPE, label = 'auto')
+        plt.legend()
+        plt.show()
+
+        plt.plot(wfa_mse, label = 'wfa')
+        plt.plot(auto_MSE, label = 'auto')
+        plt.legend()
+        plt.show()
+
 
     elif method == 'Transformer':
+        l = 2*l+1
         train_x = sliding_window(X, l).swapaxes(1, 2)
         print(train_x.shape)
         test_x = sliding_window(test_X, l).swapaxes(1, 2)
@@ -212,6 +252,7 @@ if __name__ == '__main__':
             'mixture_n': args.hmm_rank,
             'device': device,
             'nhead': args.nhead,
+            'initial_bias': bias
         }
         tran_model = run_transformer(train_x, test_x, default_parameters, verbose=True, seed = args.seed).to(device)
         evaluate(model=tran_model, X=test_X, method=method, exp_name=exp_name, r=r, fileDir=exp_folder, load_test=load_test,
@@ -229,7 +270,7 @@ if __name__ == '__main__':
         results['exp_parameters'] = args
 
         for l in np.arange(1, 20)*8:
-            print(l)
+        # for l in [152]:
             train_x = sliding_window(X, l)
             test_x = sliding_window(test_X, l)
             train_x = train_x.reshape(train_x.shape[0], -1)
@@ -246,13 +287,13 @@ if __name__ == '__main__':
             test_data = TorchDataset(test_x)
             # train_data = RealNVP(n_input=n_input, n_layers=n_layers, n_hidden=n_hidden)
             bnaf_model = BNAF(n_input=n_input, n_layers=n_layers, n_hidden=n_hidden, seed = args.seed)
-            flow_model, loss, test_loss = train_flows(bnaf_model, {'train': train_data, 'test': test_data}, epochs=500)
-
+            flow_model, loss, test_loss = train_flows(bnaf_model, {'train': train_data, 'test': test_data}, epochs=200)
 
             if not os.path.exists(exp_folder):
                 os.makedirs(exp_folder)
             # loss = np.mean(np.asarray(loss))
             results[l] = {'model_output': loss[-1], 'loss': test_loss}
+            print(results)
             with open(os.path.join(exp_folder, exp_name + 'results'), 'wb') as f:
                 pickle.dump(results, f)
 
@@ -261,13 +302,15 @@ if __name__ == '__main__':
 
 
     elif method == 'LSTM':
+        l = 2*l+1
         default_parameters = {
             'input_size': X.shape[-1],
             'RNN_hidden_size': r,
             'RNN_num_layers': 1,
             'output_size': r,
             'mixture_number': r,
-            'device': device
+            'device': device,
+            'initial_bias': bias
         }
         train_x = sliding_window(X, l).swapaxes(1, 2)
         test_x = sliding_window(test_X, l).swapaxes(1, 2)

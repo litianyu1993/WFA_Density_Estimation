@@ -337,7 +337,7 @@ class RealNVP(nn.Module):
         return samples
 
 
-def train(model, data, epochs=100, batch_size=64):
+def train(model, data, epochs=100, batch_size=512):
     train_data = data['train']
     test_data = data['test']
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size)

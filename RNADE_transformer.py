@@ -41,9 +41,10 @@ class PositionalEncoding(nn.Module):
 
 
 class TransAm(nn.Module):
-    def __init__(self, input_size = 10, feature_size=10, num_layers=1, dropout=0.1, mixture_number = 10, nhead = 1, seed = 1993):
+    def __init__(self, input_size = 10, feature_size=10, num_layers=1, dropout=0.1, mixture_number = 10, nhead = 1, seed = 1993, initial_bias = None):
         super(TransAm, self).__init__()
         torch.manual_seed(seed)
+        self.input_size  =input_size
         self.model_type = 'Transformer'
         self.encoder1 = torch.nn.Linear(input_size, feature_size, bias=True)
         self.src_mask = None
@@ -51,7 +52,7 @@ class TransAm(nn.Module):
         self.encoder_layer = nn.TransformerEncoderLayer(d_model=feature_size, nhead=nhead, dropout=dropout)
         self.transformer_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=num_layers)
 
-
+        self.initial_bias = initial_bias
 
 
         self.mu_out = torch.nn.Linear(feature_size, mixture_number * input_size, bias=True)
@@ -81,11 +82,16 @@ class TransAm(nn.Module):
         pos_src = self.pos_encoder(encoded_src)
         output = self.transformer_encoder(pos_src, self.src_mask)  # , self.src_mask)
         mu = self.mu_out(output)
+        mu = mu.reshape(mu.shape[0], mu.shape[1], -1, self.input_size)
+        if self.initial_bias is not None:
+            for i in range(mu.shape[-1]):
+                mu[:, :, :, i] = mu[:, :, :, i] + self.initial_bias[i]
+
         sig = torch.exp(self.sig_out(output))
         alpha = torch.softmax(self.alpha_out(output), dim = 2)
         log_like = 0.
         for i in range(mu.shape[0]):
-            tmp = torch_mixture_gaussian(src[i, :, :], mu[i, :, :].reshape(src.shape[1], -1, src.shape[-1]), sig[i, :, :].reshape(src.shape[1], -1, src.shape[-1]), alpha[i, :, :])
+            tmp = torch_mixture_gaussian(src[i, :, :], mu[i, :, :, :].reshape(src.shape[1], -1, src.shape[-1]), sig[i, :, :].reshape(src.shape[1], -1, src.shape[-1]), alpha[i, :, :])
             log_like += tmp
         return log_like
 
@@ -120,14 +126,14 @@ class TransformerDataset(torch.utils.data.Dataset):
 
 def run_transformer(train_data, test_data, model_params, verbose = True, seed = 1993):
     lr, epochs, batch_size = model_params['lr'], model_params['epochs'], model_params['batch_size']
-    input_size, mixture_n, nhead = model_params['input_size'], model_params['mixture_n'],  model_params['nhead']
+    input_size, mixture_n, nhead, initial_bias = model_params['input_size'], model_params['mixture_n'],  model_params['nhead'], model_params['initial_bias']
     generator_params = {'batch_size': 256,
                         'shuffle': True,
                         'num_workers': 0}
     print(train_data.shape)
     train_loader = torch.utils.data.DataLoader(train_data, **generator_params)
     test_loader = torch.utils.data.DataLoader(test_data, **generator_params)
-    model = TransAm(input_size= input_size, feature_size=2*input_size, mixture_number=mixture_n, nhead = nhead, seed = seed).to(device)
+    model = TransAm(input_size= input_size, feature_size=2*input_size, mixture_number=mixture_n, nhead = nhead, seed = seed, initial_bias=initial_bias).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5)
 

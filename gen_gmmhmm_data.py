@@ -33,8 +33,8 @@ def gen_gmmhmm_data(N, xd = 2, L=3, r = 3, seed = 1993):
     hmmmodel.startprob_ = random_startprob(r)
     hmmmodel.transmat_ = random_transmat(r)
     # print(hmmmodel.transmat_.shape)
-    hmmmodel.means_ = random_mean(r, xd)+10
-    hmmmodel.covars_ = random_covars(r, xd)*0.1
+    hmmmodel.means_ = random_mean(r, xd)
+    hmmmodel.covars_ = random_covars(r, xd)
     train_x = np.zeros([N, xd, L])
     test_x = np.zeros([N, xd, L])
     # print(train_x.shape)

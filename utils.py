@@ -1,3 +1,4 @@
+import pandas
 import torch
 from torch import nn
 import torch.distributions as D
@@ -6,6 +7,8 @@ import numpy as np
 from hmmlearn import hmm
 import pickle
 import argparse
+import os
+
 
 def sliding_window(X, window_size = 5):
     final_data = []
@@ -13,6 +16,243 @@ def sliding_window(X, window_size = 5):
         tmp = X[j:j+window_size]
         final_data.append(tmp)
     return np.asarray(final_data).swapaxes(1, 2)
+def get_sea_data():
+    X = np.genfromtxt(os.path.join(os.path.dirname(os.path.realpath('__file__')), 'sea', 'SEA_training_data.csv'),
+                      delimiter=',')
+    y = np.genfromtxt(os.path.join(os.path.dirname(os.path.realpath('__file__')), 'sea', 'SEA_training_class.csv'), delimiter=',')
+    return X, y
+
+# def get_spam_data():
+#     file = os.path.join(os.path.dirname(os.path.realpath('__file__')), 'spam', 'spam.libsvm')
+#     data = datasets.load_svmlight_file(file)
+#     print(data[0].shape, data[1].shape)
+#     return data[0], data[1]
+
+def get_electronic_data():
+    data = np.genfromtxt(os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'Elec2', 'elec2_data.dat1'),
+                         skip_header=1,
+                         skip_footer=1,
+                         names=True,
+                         dtype=float,
+                         delimiter=' ')
+    new_data = []
+    for i in range(len(data)):
+        x = []
+        for j in range(len(data[i])):
+            x.append(data[i][j])
+        new_data.append(x)
+    new_data = np.asarray(new_data)
+    X = new_data
+
+    data = np.genfromtxt(os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'Elec2', 'elec2_label.dat2'),
+                         skip_header=1,
+                         skip_footer=1,
+                         names=True,
+                         dtype=float,
+                         delimiter=' ')
+    new_data = []
+    for i in range(len(data)):
+        x = []
+        for j in range(len(data[i])):
+            x.append(data[i][j])
+        new_data.append(x)
+    new_data = np.asarray(new_data)
+    Y = new_data
+    return X, Y
+
+def get_movingSquares():
+    X = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'movingSquares', 'movingSquares.data'),
+        delimiter=' ')
+    y = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'movingSquares', 'movingSquares.labels'),
+        delimiter=' ')
+    return X, y
+
+def get_hyperplane():
+    X = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'artificial', 'hyperplane', 'rotatingHyperplane.data'),
+        delimiter=' ')
+    y = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'artificial', 'hyperplane', 'rotatingHyperplane.labels'),
+        delimiter=' ')
+    return X, y
+
+def get_poker():
+    X = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'poker', 'poker.data'),
+        delimiter=' ')
+    y = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'poker', 'poker.labels'),
+        delimiter=' ')
+    # new_x = []
+    # for i in range(X.shape[1]):
+    #     n_values = int(np.max(X[:, i]) + 1)
+    #     # print(X[:, i].astype(int))
+    #     new_x.append(np.eye(n_values)[X[:, i].astype(int)])
+    # X = np.concatenate(new_x, axis=1)
+    print('onehot', X.shape)
+    num_per_class = {}
+    for i in range(len(y)):
+        if y[i] not in num_per_class:
+            num_per_class[y[i]] = 0
+        else:
+            num_per_class[y[i]] += 1
+    import operator
+    index1 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
+    del num_per_class[index1]
+    index2 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
+
+    new_X = []
+    new_y = []
+    for i in range(len(y)):
+        if y[i] == index1 or y[i] == index2:
+            new_X.append(X[i])
+            if y[i] == index1:
+                new_y.append(0)
+            else:
+                new_y.append(1)
+    new_y, new_X = np.asarray(new_y), np.asarray(new_X)
+    return new_X, new_y
+
+def get_rialto():
+    X = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'rialto', 'rialto.data'),
+        delimiter=' ')
+    y = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'rialto', 'rialto.labels'),
+        delimiter=' ')
+
+    num_per_class = {}
+    for i in range(len(y)):
+        if y[i] not in num_per_class:
+            num_per_class[y[i]] = 0
+        else:
+            num_per_class[y[i]] += 1
+    import operator
+    index1 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
+    del num_per_class[index1]
+    index2 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
+
+    new_X = []
+    new_y = []
+    for i in range(len(y)):
+        if y[i] == index1 or y[i] == index2:
+            new_X.append(X[i])
+            if y[i] == index1:
+                new_y.append(0)
+            else:
+                new_y.append(1)
+    new_y, new_X = np.asarray(new_y), np.asarray(new_X)
+    return new_X, new_y
+
+def get_covtype():
+    from scipy.io import arff
+    import pandas as pd
+    file = os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'covType', 'covType.arff')
+    a = arff.loadarff(file)
+    a = pd.DataFrame(a[0])
+    a = a.to_numpy().astype('float')
+    X = a[:, :-1]
+    y = a[:, -1].astype('int')
+    num_per_class = {}
+    for i in range(len(y)):
+        if y[i] not in num_per_class:
+            num_per_class[y[i]] = 0
+        else:
+            num_per_class[y[i]] += 1
+    import operator
+    index1 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
+    del num_per_class[index1]
+    index2 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
+
+    new_X = []
+    new_y = []
+    for i in range(len(y)):
+        if y[i] == index1 or y[i] == index2:
+            new_X.append(X[i])
+            if y[i] == index1:
+                new_y.append(0)
+            else:
+                new_y.append(1)
+    new_y, new_X = np.asarray(new_y), np.asarray(new_X)
+    return new_X, new_y
+
+def get_mixeddrift():
+    X = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'artificial', 'mixedDrift',
+                     'mixedDrift.data'),
+        delimiter=' ')
+    y = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'artificial', 'mixedDrift',
+                     'mixedDrift.labels'),
+        delimiter=' ')
+    num_per_class = {}
+    for i in range(len(y)):
+        if y[i] not in num_per_class:
+            num_per_class[y[i]] = 0
+        else:
+            num_per_class[y[i]] += 1
+    import operator
+    index1 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
+    del num_per_class[index1]
+    index2 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
+
+    new_X = []
+    new_y = []
+    for i in range(len(y)):
+        if y[i] == index1 or y[i] ==index2:
+            new_X.append(X[i])
+            if y[i] == index1:
+                new_y.append(0)
+            else:
+                new_y.append(1)
+    new_y, new_X = np.asarray(new_y), np.asarray(new_X)
+    return new_X, new_y
+def get_ETT():
+    X = pandas.read_csv(os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'ETT-small',
+                     'ETTm1.csv'))
+    # X = X.data_frame
+    return X.to_numpy()[:, 1:].astype('float32')
+
+def get_chess():
+    X = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'artificial', 'chess',
+                     'transientChessboard.data'),
+        delimiter=' ')
+    y = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'artificial', 'chess',
+                     'transientChessboard.labels'),
+        delimiter=' ')
+    num_per_class = {}
+    for i in range(len(y)):
+        if y[i] not in num_per_class:
+            num_per_class[y[i]] = 0
+        else:
+            num_per_class[y[i]] += 1
+    import operator
+    index1 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
+    del num_per_class[index1]
+    index2 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
+
+    new_X = []
+    new_y = []
+    for i in range(len(y)):
+        if y[i] == index1 or y[i] ==index2:
+            new_X.append(X[i])
+            if y[i] == index1:
+                new_y.append(0)
+            else:
+                new_y.append(1)
+    new_y, new_X = np.asarray(new_y), np.asarray(new_X)
+    return new_X, new_y
+
+def get_weather():
+    X = np.genfromtxt(os.path.join(os.path.dirname(os.path.realpath('__file__')), 'weather', 'NEweather_data.csv'),
+                      delimiter=',')
+    y = np.genfromtxt(os.path.join(os.path.dirname(os.path.realpath('__file__')), 'weather', 'NEweather_class.csv'), delimiter=',')
+    return X, y
+
 
 def exp_parser():
     parser = argparse.ArgumentParser()
@@ -73,44 +313,47 @@ def get_parameters_dist(model, X, h):
     gmm = mixture_same_family.MixtureSameFamily(mix, comp)
     return gmm.sample_n(1)
 
-def phi(model, X, h, prediction = False):
-    # print(h.shape)
-    # h = torch.tanh(h)
-    # print('h1', h)
-    # for i in range(len(model.nade_layers)):
-    #     h = model.nade_layers[i](h)
-    #     h = torch.tanh(h)
-    # print(h.shape)
-    # print(h.shape, model.mu_out.shape, model.mu_out_bias.shape)
-    # mu = torch.einsum('ij, jkl -> ikl', h, model.mu_out)+ model.mu_out_bias
-    # print('1', h, torch.any(torch.isnan(h)))
-    mu = model.mu_out(h)
-    # mu = torch.tanh(mu)
-    # mu = model.mu_out2(mu)
-    mu = mu.reshape(mu.shape[0], -1, X.shape[1])
+def phi(model, X, h, prediction = False, use_relu = False):
 
-    if model.initial_bias is not None:
-        for i in range(mu.shape[-1]):
-            mu[:, :, i] =  mu[:, :, i] + model.initial_bias[i]
-    # sig =  torch.einsum('ij, jkl -> ikl', h, model.sig_out)+ model.sig_out_bias
-    # sig = torch.exp(sig)
-    sig = model.sig_out(h)
-    # sig = torch.tanh(sig)
-    # sig = model.sig_out2(sig)
-    sig = torch.exp(sig)
-    sig = sig.reshape(mu.shape[0], -1, X.shape[1])
-    # print(torch.mean(sig))
-    # print(h)
-    # h = h - torch.max(h)
-    # print('h', h)
-    # print('alpha', model.alpha_out(h))
-    # print(h.shape)
-    # print('2', h, torch.any(torch.isnan(h)))
-    tmp = model.alpha_out(h)
-    # tmp = torch.tanh(tmp)
-    # tmp = model.alpha_out2(tmp)
-    alpha = torch.softmax(tmp, dim=1)
-    return torch_mixture_gaussian(X, mu, sig, alpha, prediction)
+    if model.num_classes is None:
+        mu = model.mu_out(h)
+        if use_relu:
+            mu = torch.relu(mu)
+        else:
+            mu = torch.exp(mu)
+        mu = model.mu_out2(mu)
+        mu = mu.reshape(mu.shape[0], -1, model.xd)
+        if model.initial_bias is not None:
+            for i in range(mu.shape[-1]):
+                mu[:, :, i] = mu[:, :, i] +  model.initial_bias[i]
+
+        sig = model.sig_out(h)
+        sig = torch.exp(sig)
+        sig = sig.reshape(mu.shape[0], -1, model.xd)
+        tmp = model.alpha_out(h)
+        alpha = torch.softmax(tmp, dim=1)
+        return torch_mixture_gaussian(X, mu, sig, alpha, prediction)
+    else:
+        probs = torch.ones(model.num_classes).to(model.device)
+        for i in range(model.num_classes):
+
+            mu = model.mu_outs[i](h)
+            mu = torch.exp(mu)
+            mu = model.mu_outs2[i](mu)
+            mu = mu.reshape(1, -1)
+            mu = mu.reshape(mu.shape[0], -1, model.xd)
+            if model.initial_bias is not None:
+                for j in range(mu.shape[-1]):
+                    mu[:, :, j] = mu[:, :, j] + model.initial_bias[j]
+            sig = model.sig_outs[i](h)
+            sig = torch.exp(sig)
+            sig = sig.reshape(mu.shape[0], -1, model.xd)
+            tmp = model.alpha_outs[i](h)
+            alpha = torch.softmax(tmp, dim=1)
+            probs[i] = torch_mixture_gaussian(X, mu, sig, alpha, prediction = False)
+        return probs
+
+
 
 def phi_predict(model, X, h):
     mu = model.mu_out(h)
@@ -143,17 +386,23 @@ def MAPE(pred, y):
 
 
 def torch_mixture_gaussian(X, mu, sig, alpha, prediction = False):
-
-    mix = D.Categorical(alpha) 
+    index = torch.argmax(alpha)
+    mix = D.Categorical(alpha)
+    # sig = torch.ones(sig.shape).to('cuda:0')*0.1
     comp = D.Normal(mu, sig)
     comp = D.Independent(comp, 1)
     # print(mu.shape, sig.shape, alpha.shape, comp)
     gmm = mixture_same_family.MixtureSameFamily(mix, comp)
+    # pred = torch.mean(gmm.sample_n(100), dim = 0)
     # print(gmm.sample([1])[0, 0, :], X[0], gmm.mean[0])
     if prediction:
-        return gmm.mean, gmm.stddev
+        index = torch.argmax(alpha)
+        # print(mu.shape)
+        # return gmm.mean
+        return gmm.sample_n(1)[0]
     else:
         return gmm.log_prob(X)
+
 
 
 def gen_hmm_parameters(r = 3):
@@ -169,7 +418,7 @@ def gen_hmm_parameters(r = 3):
     var = np.tile(np.identity(1), (r, 1, 1))
     return init, transition, mu, var
 
-def autoregressive_regression(X, testX, L = 50):
+def autoregressive_regression(X, testX, L = 51, ori_X = None):
     from sklearn.linear_model import LinearRegression
     train_X = sliding_window(X, L)
     test_X = sliding_window(testX, L*10)
@@ -179,27 +428,27 @@ def autoregressive_regression(X, testX, L = 50):
     train_y = train_X[:, :, -1].reshape(train_X.shape[0], -1)
     reg = LinearRegression().fit(train_x, train_y)
 
-    test_x = test_X[:, :, :L-1].swapaxes(1, 2).reshape(test_X.shape[0], -1)
+    test_x = test_X[0, :, :L-1].swapaxes(0, 1).ravel()
+
+    mape = []
+    mse = []
     for i in range(test_X.shape[-1] - L):
-        test_y = test_X[:, :, i+L-1].reshape(test_X.shape[0], -1)
+        test_y = test_X[0, :, i+L-1].reshape(1, -1)
 
         # print(test_x.shape, test_X.shape)
+        test_x = test_x.reshape(1, -1)
         pred_test  = reg.predict(test_x)
         test_x = test_x[:, X.shape[1]:]
         test_x = np.concatenate((test_x, pred_test), axis = 1)
 
+        mape.append(MAPE(torch.tensor(pred_test), torch.tensor(test_y)).numpy())
+        mse.append(np.mean((pred_test - test_y)**2))
         print(i, MAPE(torch.tensor(pred_test), torch.tensor(test_y)), np.mean((pred_test - test_y)**2))
         # import time
         # time.sleep(2)
-    return MAPE(torch.tensor(pred_test), torch.tensor(test_y)), np.mean((pred_test - test_y)**2)
+    return mape, mse
 
 
 if __name__ == '__main__':
-    rs = [5, 10, 20, 40]
-    for r in rs:
-        hmmmodel = hmm.GaussianHMM(n_components=r, covariance_type="full")
-        hmmmodel.startprob_, hmmmodel.transmat_, hmmmodel.means_, hmmmodel.covars_ = gen_hmm_parameters(r)
-        with open('rank_'+str(r), 'wb') as f:
-            pickle.dump(hmmmodel, f)
-
+    get_ETT()
 
