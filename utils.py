@@ -17,9 +17,9 @@ def sliding_window(X, window_size = 5):
         final_data.append(tmp)
     return np.asarray(final_data).swapaxes(1, 2)
 def get_sea_data():
-    X = np.genfromtxt(os.path.join(os.path.dirname(os.path.realpath('__file__')), 'sea', 'SEA_training_data.csv'),
+    X = np.genfromtxt(os.path.join(os.path.dirname(os.path.realpath('__file__')), 'artificial', 'sea', 'SEA_training_data.csv'),
                       delimiter=',')
-    y = np.genfromtxt(os.path.join(os.path.dirname(os.path.realpath('__file__')), 'sea', 'SEA_training_class.csv'), delimiter=',')
+    y = np.genfromtxt(os.path.join(os.path.dirname(os.path.realpath('__file__')), 'artificial', 'sea', 'SEA_training_class.csv'), delimiter=',')
     return X, y
 
 # def get_spam_data():
@@ -62,10 +62,34 @@ def get_electronic_data():
 
 def get_movingSquares():
     X = np.genfromtxt(
-        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'movingSquares', 'movingSquares.data'),
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'artificial', 'movingSquares', 'movingSquares.data'),
         delimiter=' ')
     y = np.genfromtxt(
-        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'movingSquares', 'movingSquares.labels'),
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'artificial','movingSquares', 'movingSquares.labels'),
+        delimiter=' ')
+    return X, y
+def get_interRBF():
+    X = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'artificial', 'rbf', 'interchangingRBF.data'),
+        delimiter=' ')
+    y = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'artificial', 'rbf', 'interchangingRBF.labels'),
+        delimiter=' ')
+    return X, y
+def get_movingRBF():
+    X = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'artificial', 'rbf', 'movingRBF.data'),
+        delimiter=' ')
+    y = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'artificial', 'rbf', 'movingRBF.labels'),
+        delimiter=' ')
+    return X, y
+def get_outdoor():
+    X = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'outdoor', 'outdoorStream.data'),
+        delimiter=' ')
+    y = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'outdoor', 'outdoorStream.labels'),
         delimiter=' ')
     return X, y
 

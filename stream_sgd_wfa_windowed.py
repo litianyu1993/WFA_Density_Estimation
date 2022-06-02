@@ -5,6 +5,7 @@ import sklearn
 from utils import *
 from gradient_descent import *
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+from collections import Counter
 from nonstationary_HMM import incremental_HMM
 def one_hot(y, num_classes = 2):
     tmp = torch.ones(num_classes)*(0)
@@ -29,7 +30,7 @@ class stream_density_wfa(nn.Module):
         self.smoothing_factor = parameter_dict['smoothing_factor']
         self.init_std = parameter_dict['init_std']
         self.num_layers = parameter_dict['num_layers']
-        tmp_core = torch.normal(0, self.init_std, [self.r, self.d, self.r])
+
 
         self.num_classes = parameter_dict['num_classes']
         self.prior = torch.ones(self.num_classes)
@@ -37,6 +38,7 @@ class stream_density_wfa(nn.Module):
         self.model = parameter_dict['model']
 
         if self.model =='wfa':
+            tmp_core = torch.normal(0, self.init_std, [self.r, self.d, self.r])
             self.A = nn.Parameter(tmp_core.clone().float().requires_grad_(True))
         elif self.model == 'lstm':
             self.recurrent = nn.LSTM(input_size=self.d, hidden_size=self.r,
@@ -150,10 +152,16 @@ class stream_density_wfa(nn.Module):
                 total += 1
                 pred_all.append(torch.softmax(pred_prob, dim = 0).detach().cpu().numpy())
                 if (i >= 100 and i % self.evaluate_interval == 0) or i == train_x.shape[0] - 1 - self.window_size:
-                    auc = sklearn.metrics.roc_auc_score(y[self.window_size - 1:(i + self.window_size)].cpu().numpy(), np.asarray(pred_all)[:, 1])
-                    print(i, loss.detach().cpu().numpy().item(), correct / total, pred_class, auc, pred_prob)
-                    pred_prob = pred_prob.detach().cpu().numpy()
-                    results.append([loss.detach().cpu().numpy().item(), correct / total, auc, pred_prob[0], pred_prob[1]])
+                    if self.num_classes == 2:
+                        auc = sklearn.metrics.roc_auc_score(y[self.window_size - 1:(i + self.window_size)].cpu().numpy(), np.asarray(pred_all)[:, 1])
+                        print(i, loss.detach().cpu().numpy().item(), correct / total, pred_class, auc, pred_prob)
+                        pred_prob = pred_prob.detach().cpu().numpy()
+                        results.append([loss.detach().cpu().numpy().item(), correct / total, auc, pred_prob[0], pred_prob[1]])
+                    else:
+                        print(i, correct / total )
+                        pred_prob = pred_prob.detach().cpu().numpy()
+                        results.append(
+                            [loss.detach().cpu().numpy().item(), correct / total, pred_prob[0], pred_prob[1]])
             elif task == 'regression':
                 pred_all.append(pred.detach().cpu().numpy())
                 current_mse = torch.mean((pred- train_x[i+1])**2).detach().cpu().numpy()
@@ -188,19 +196,32 @@ class stream_density_wfa(nn.Module):
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--r', default=64, type=int, help='hidden states size of the model')
-    parser.add_argument('--exp_data', default='elec', help='dataset for the experiment')
+    parser.add_argument('--exp_data', default='movingRBF', help='dataset for the experiment')
     parser.add_argument('--lr', default=0.001, type=float, help='learning rate')
     parser.add_argument('--nc', default=2, type=int, help='number of classes')
     parser.add_argument('--mix_n', default=20, type=int, help='number of mixture components')
     parser.add_argument('--method', default='wfa', help='method to use')
     parser.add_argument('--task', default='classification', help='task to perform')
     return parser
-
+import copy
 def normalize(X):
-    tmp = X[:int(len(X))]
-    mean = np.mean(tmp, axis = 0)
-    std = np.std(tmp, axis = 0)
-    return (X  - mean)/std
+    new_x = np.zeros(X.shape)
+    tmp = copy.deepcopy(X[:1001])
+    mean = np.mean(tmp, axis=0)
+    std = np.std(tmp, axis=0)
+    tmp = (tmp - mean) / std
+    new_x[:1001] = tmp
+    for i in range(1001, len(X)):
+        tmp = copy.deepcopy(X[i-1000:i])
+        mean = np.mean(tmp, axis=0)
+        std = np.std(tmp, axis=0)
+        tmp = (X[i] - mean)/std
+        new_x[i] = tmp
+    #
+    # tmp = X[:1000]
+    # mean = np.mean(tmp, axis = 0)
+    # std = np.std(tmp, axis = 0)
+    return new_x
 
 if __name__ == '__main__':
     parser = get_args()
@@ -224,19 +245,29 @@ if __name__ == '__main__':
     elif args.exp_data == 'elec':
         X, y = get_electronic_data()
         X = X[:, 2:]
-        # X = normalize(X)
+        X = normalize(X)
         file_dir = os.path.join(file_dir, 'realWorld', 'Elec2')
     elif args.exp_data == 'mixeddrift':
         X, y = get_mixeddrift()
+        X = normalize(X)
         file_dir = os.path.join(file_dir, 'artificial', 'mixedDrift')
     elif args.exp_data == 'hyperplane':
         X, y = get_hyperplane()
+        X = normalize(X)
         file_dir = os.path.join(file_dir, 'artificial', 'hyperplane')
     elif args.exp_data == 'chess':
         X, y = get_chess()
+        evaluate_interval = 1000
+        X = normalize(X)
         file_dir = os.path.join(file_dir, 'artificial', 'chess')
+    elif args.exp_data == 'outdoor':
+        X, y = get_outdoor()
+        evaluate_interval = 100
+        X = normalize(X)
+        file_dir = os.path.join(file_dir, 'realWorld', 'outdoor')
     elif args.exp_data == 'covType':
         X, y = get_covtype()
+        X = normalize(X[:, :10])
         file_dir = os.path.join(file_dir, 'realWorld', 'covType')
         evaluate_interval = 1000
     elif args.exp_data == 'rialto':
@@ -244,13 +275,27 @@ if __name__ == '__main__':
         file_dir = os.path.join(file_dir, 'realWorld', 'rialto')
     elif args.exp_data == 'poker':
         X, y = get_poker()
+        X = normalize(X)
         file_dir = os.path.join(file_dir, 'realWorld', 'poker')
         evaluate_interval = 1000
+    elif args.exp_data == 'interRBF':
+        X, y = get_interRBF()
+        X = normalize(X)
+        file_dir = os.path.join(file_dir, 'artificial', 'rbf')
+        evaluate_interval = 1000
+    elif args.exp_data == 'movingRBF':
+        X, y = get_movingRBF()
+        X = normalize(X)
+        file_dir = os.path.join(file_dir, 'artificial', 'rbf')
+        evaluate_interval = 1000
     if args.task == 'classification':
+        print(y)
         y = torch.tensor(y).type(torch.LongTensor).to(device)
         y = torch.tensor(y).reshape(-1, 1).to(device)
     X = torch.tensor(X).to(device)
-    print(X.shape)
+    tmp_y = y.clone().cpu().numpy().reshape(-1)
+    args.nc = len(Counter(tmp_y).keys())
+    print(X.shape, args.nc)
     # import time
     # time.sleep(2)
     #
@@ -263,11 +308,11 @@ if __name__ == '__main__':
 
     lr = args.lr
     validation_results = {}
-    all_mix_ns = [4, 8, 16, 32, 64, 128, 256, 512]
-    smoothing_factors = [0]
+    all_mix_ns = [2, 4, 8, 16, 32, 64, 128, 256, 512]
+    smoothing_factors = [0, 0.05, 0.1, 0.3]
     seeds = [1993]
-    window_sizes = [2, 3, 5, 7]
-    for r in [4, 8, 16, 32, 64, 128, 256, 512]:
+    window_sizes = [2, 5, 7, 10]
+    for r in [2, 4, 8, 16, 32, 64, 128, 256, 512]:
         for mix_n in all_mix_ns:
             for sf in smoothing_factors:
                 for seed in seeds:
@@ -276,7 +321,7 @@ if __name__ == '__main__':
                             'seed': seed,
                             'task': args.task,
                             'input_size': X.shape[1],
-                            'encoding_size': r,
+                            'encoding_size': X.shape[1],
                             'device': device,
                             'evaluate_interval': evaluate_interval,
                             'hidden_size': r,
@@ -297,12 +342,10 @@ if __name__ == '__main__':
 
                         if r not in validation_results:
                             validation_results[r] = {}
-                            validation_results[r]['model'] = [model]
                             validation_results[r]['parameters'] = [default_parameters]
                             validation_results[r]['pred_all'] = [pred_all]
                             validation_results[r]['final_auc'] = [results[-1][-3]]
                         else:
-                            validation_results[r]['model'].append(model)
                             validation_results[r]['pred_all'].append(pred_all)
                             validation_results[r]['parameters'].append(default_parameters)
                             validation_results[r]['final_auc'].append(results[-1][-3])
@@ -317,12 +360,11 @@ if __name__ == '__main__':
         for i, auc in enumerate(validation_results[r]['final_auc']):
             if auc >= max_auc:
                 max_auc = auc
-                model = validation_results[r]['model'][i]
                 parameters = validation_results[r]['parameters'][i]
                 pred_all = validation_results[r]['pred_all'][i]
-    print(parameters)
+    model = stream_density_wfa(parameters)
     optimizer = optim.Adam(model.parameters(), lr=lr, amsgrad=True)
-    results, pred_all = model.fit(X[:100], optimizer, y = y[:100], validation_number = 0, verbose=True, scheduler = None, task=args.task)
+    results, pred_all = model.fit(X, optimizer, y = y, validation_number = 0, verbose=True, scheduler = None, task=args.task)
     results = np.asarray(results)
     print(results)
     save_file = {'selected_parameters': parameters, 'results': results}
