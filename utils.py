@@ -8,7 +8,84 @@ from hmmlearn import hmm
 import pickle
 import argparse
 import os
+import copy
+class incremental_HMM(nn.Module):
 
+    def __init__(self, r, seed = 1993):
+        np.random.seed(seed)
+        super().__init__()
+        # print('current rank is ', r)
+        self.transition = torch.rand([r, r])
+        self.transition = torch.softmax(self.transition, dim = 1)
+        self.sig = torch.ones(r).reshape([1, r])
+        self.init_w = torch.rand([1, r])
+        self.init_w = torch.softmax(self.init_w, dim = 1)
+        self.mu_rates = torch.rand(r).reshape([1, r])
+        np.random.seed(seed)
+        self.seed = seed
+        torch.manual_seed(self.seed)
+
+
+    def torch_mixture_gaussian(self, mu, sig, h):
+        mix = D.Categorical(h)
+        comp = D.Normal(mu, sig)
+        gmm = mixture_same_family.MixtureSameFamily(mix, comp)
+        return gmm
+
+    def sample_from_gmm(self, gmm, n):
+        # print(gmm.sample([n]))
+
+        return gmm.sample([n])
+
+
+    def score(self, X, stream = False):
+        import copy
+        h = self.init_w
+        joint = 0.
+        if stream:
+            all_probs = []
+            all_conditionals = []
+        mu = copy.deepcopy(self.mu_rates)
+        for i in range(X.shape[0]):
+            if i % 100 == 0:
+                mu+=10
+            gmm = self.torch_mixture_gaussian(mu, self.sig, h)
+            tmp = gmm.log_prob(torch.tensor(X[i, :]))
+            joint += tmp
+            h = h @ self.transition
+            if stream:
+                all_probs.append(copy.deepcopy(joint.numpy()))
+                all_conditionals.append(tmp.numpy())
+            # print(i, h)
+            # print(i, 'scoring', mu.reshape(1, -1)@h.reshape(-1, 1))
+        if stream:
+            return all_probs, all_conditionals
+        else:
+            return joint.numpy()
+
+    def sample(self, l, seed = 1993):
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        h = self.init_w
+        samples = torch.zeros([1, l])
+        mu = copy.deepcopy(self.mu_rates)
+        for i in range(l):
+            if i % 100 ==0:
+                mu += 10
+            gmm = self.torch_mixture_gaussian(mu, self.sig, h)
+            current_sample = self.sample_from_gmm(gmm, 1)
+            samples[:, i] = current_sample
+            h = h @ self.transition
+            # print(i,'sampling', mu.reshape(1, -1)@h.reshape(-1, 1))
+        return samples
+def get_hmm(r = 3, N = 1000):
+    nshmm = incremental_HMM(r=r)
+    X = nshmm.sample(N)
+    X = np.asarray(X).swapaxes(0, 1)
+    ground_truth_joint, ground_truth_conditionals = nshmm.score(X, stream = True)
+    ground_truth_conditionals = np.asarray(ground_truth_conditionals)
+    ground_truth_joint = np.asarray(ground_truth_joint)
+    return X, ground_truth_conditionals, ground_truth_joint
 
 def sliding_window(X, window_size = 5):
     final_data = []
@@ -86,10 +163,10 @@ def get_movingRBF():
     return X, y
 def get_outdoor():
     X = np.genfromtxt(
-        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'outdoor', 'outdoorStream.data'),
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'outdoor', 'Outdoor-train.data'),
         delimiter=' ')
     y = np.genfromtxt(
-        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'outdoor', 'outdoorStream.labels'),
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'outdoor', 'Outdoor-train.labels'),
         delimiter=' ')
     return X, y
 
@@ -238,6 +315,51 @@ def get_ETT():
                      'ETTm1.csv'))
     # X = X.data_frame
     return X.to_numpy()[:, 1:].astype('float32')
+
+def get_border():
+    X = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'border',
+                     'border-train.data'),
+        delimiter=' ')
+    y = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'border',
+                     'border-train.labels'),
+        delimiter=' ')
+    return X, y
+
+def get_COIL():
+    X = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'COIL',
+                     'COIL-train.data'),
+        delimiter=' ')
+    y = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'COIL',
+                     'COIL-train.labels'),
+        delimiter=' ')
+    return X, y
+
+def get_MNIST():
+    X = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'MNIST',
+                     'mnistTrainSamples.data'),
+        delimiter=' ')
+    y = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'MNIST',
+                     'mnistTrainLabels.data'),
+        delimiter=' ')
+    return X, y
+
+def get_overlap():
+    X = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'overlap',
+                     'overlap-train.data'),
+        delimiter=' ')
+    y = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'overlap',
+                     'overlap-train.labels'),
+        delimiter=' ')
+    return X, y
+
 
 def get_chess():
     X = np.genfromtxt(

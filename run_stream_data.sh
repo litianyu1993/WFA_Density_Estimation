@@ -14,7 +14,7 @@ pip install --no-index -r requirements.txt
 
 
 
-for exp_data in covType poker rialto sea elec mixeddrift hyperplane chess weather
+for exp_data in border COIL MNIST outdoor overlap elec
     do
     for method in wfa
     do
