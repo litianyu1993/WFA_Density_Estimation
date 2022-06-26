@@ -9,6 +9,38 @@ import pickle
 import argparse
 import os
 import copy
+def get_lr(gamma, optimizer):
+    return [group['lr'] * gamma
+            for group in optimizer.param_groups]
+
+
+def get_copy_paste(n =100, d = 3, lag = 10, seed = 1993):
+    np.random.seed(seed)
+    X = np.random.normal(0, 1, size = [n, d])
+    y = []
+    y_neg = 0
+    y_pos = 0
+    for i in range(n):
+        if X[i-lag][0] - X[i][0] <= 0:
+            y.append(1)
+            y_pos += 1
+        else:
+            y.append(0)
+            y_neg += 1
+    y = np.asarray(y)
+    print(y_pos, y_neg, y_pos/n)
+    print(naive_prediction(y))
+    print(X[:10])
+    print(y[:10])
+    return X, y
+
+def naive_prediction(y):
+    count = 0
+    for i in range(1, len(y)):
+        if y[i] == y[i-1]: count += 1
+    print(count/len(y))
+
+
 class incremental_HMM(nn.Module):
 
     def __init__(self, r, seed = 1993):
@@ -179,6 +211,23 @@ def get_hyperplane():
         delimiter=' ')
     return X, y
 
+def get_letter():
+    X = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'letter', 'letter-recognition.data'),
+        delimiter=',')
+    file_path = os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'letter', 'letter-recognition.data')
+    file1 = open(file_path, 'r')
+    Lines = file1.readlines()
+    y = []
+    for line in Lines:
+        y.append(line.strip()[0])
+    X = X[:, 1:]
+
+    for i in range(len(y)):
+        y[i] = ord(y[i].lower()) - 97
+    y = np.asarray(y).reshape(-1, 1)
+    return X, y
+
 def get_poker():
     X = np.genfromtxt(
         os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'poker', 'poker.data'),
@@ -255,29 +304,29 @@ def get_covtype():
     a = pd.DataFrame(a[0])
     a = a.to_numpy().astype('float')
     X = a[:, :-1]
-    y = a[:, -1].astype('int')
-    num_per_class = {}
-    for i in range(len(y)):
-        if y[i] not in num_per_class:
-            num_per_class[y[i]] = 0
-        else:
-            num_per_class[y[i]] += 1
-    import operator
-    index1 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
-    del num_per_class[index1]
-    index2 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
-
-    new_X = []
-    new_y = []
-    for i in range(len(y)):
-        if y[i] == index1 or y[i] == index2:
-            new_X.append(X[i])
-            if y[i] == index1:
-                new_y.append(0)
-            else:
-                new_y.append(1)
-    new_y, new_X = np.asarray(new_y), np.asarray(new_X)
-    return new_X, new_y
+    y = a[:, -1].astype('int') - 1
+    # num_per_class = {}
+    # for i in range(len(y)):
+    #     if y[i] not in num_per_class:
+    #         num_per_class[y[i]] = 0
+    #     else:
+    #         num_per_class[y[i]] += 1
+    # import operator
+    # index1 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
+    # del num_per_class[index1]
+    # index2 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
+    #
+    # new_X = []
+    # new_y = []
+    # for i in range(len(y)):
+    #     if y[i] == index1 or y[i] == index2:
+    #         new_X.append(X[i])
+    #         if y[i] == index1:
+    #             new_y.append(0)
+    #         else:
+    #             new_y.append(1)
+    # new_y, new_X = np.asarray(new_y), np.asarray(new_X)
+    return X, y
 
 def get_mixeddrift():
     X = np.genfromtxt(
@@ -360,6 +409,21 @@ def get_overlap():
         delimiter=' ')
     return X, y
 
+def get_gisette():
+    X = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'gisette',
+                     'gisette_train.data'),
+        delimiter=' ')
+    y = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'gisette',
+                     'gisette_train.labels'),
+        delimiter=' ')
+    for i in range(len(y)):
+        if y[i] == -1:
+            y[i] =0
+
+    return X, y
+
 
 def get_chess():
     X = np.genfromtxt(
@@ -434,12 +498,13 @@ def exp_parser():
     parser.add_argument('--nhead', default= 1, type = int, help='number of head for multihead attention')
     parser.set_defaults(load_data=True)
     return parser
+
 def encoding(model, X):
-    # X = model.encoder_1(X)
-    # X = torch.relu(X)
-    # X = model.encoder_2(X)
-    # return torch.tanh(X)
+    X = model.encoder_1(X)
+    X = torch.relu(X)
+    X = model.encoder_2(X)
     return X
+    # return X
 
 def Fnorm(h):
     norm =  torch.norm((h), p=2)

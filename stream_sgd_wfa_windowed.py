@@ -90,13 +90,11 @@ class stream_density_wfa(nn.Module):
 
         all_results = []
         for i in range(self.window_size - 1):
+
             assert self.window_size >= 2
             current = X[i]
             next = X[i+1]
-            current = self.encoder_1(current)
-            current = torch.relu(current)
-            current = self.encoder_2(current)
-            current = torch.relu(current)
+            current = encoding(self, current)
             if self.model == 'wfa':
                 tmp = torch.einsum("d, i, idj -> j", current, prev.ravel(), self.A).reshape(1, -1)
                 tmp = torch.sigmoid(tmp)
@@ -128,6 +126,8 @@ class stream_density_wfa(nn.Module):
             pred_all = []
 
         for i in range(0, train_x.shape[0]-self.window_size):
+            # for param_group in optimizer.param_groups:
+            #     param_group['lr'] = 0.001
             optimizer.zero_grad()
             pred_prob, _ = self(prev, train_x[i:])
             reg_weight = 1.
@@ -136,11 +136,17 @@ class stream_density_wfa(nn.Module):
                 loss, prev = self.lossfunc(prev, train_x[i:], y=train_x[i+1:], reg_weight = reg_weight, task = task)
             elif task == 'classification':
                 target = y[i+self.window_size-1]
+                # print(i, train_x[i], target)
                 loss, prev = self.lossfunc(prev, train_x[i:], y=target, reg_weight=reg_weight, task=task)
             elif task == 'density':
                 loss, prev = self.lossfunc(prev, train_x[i:], y = train_x[i+1:], task = task)
 
+
             loss.backward()
+            # for name, param in self.named_parameters():
+            #     if param.grad is not None:
+            #         param_norm = param.grad.data.norm(2).detach()
+            #         print(name, param_norm)
             joint_likelihood += -loss.detach().cpu().numpy()
             optimizer.step()
             if scheduler is not None:
@@ -148,21 +154,21 @@ class stream_density_wfa(nn.Module):
             if task  == 'classification':
                 # if i >= 200:
                 #     self.prior = self.get_prior(y, i, lag=100).to(self.device)
-                pred_prob = torch.mul(pred_prob, self.prior.to(self.device))
+                # pred_prob = torch.mul(pred_prob, self.prior.to(self.device))
 
-                pred_class = torch.argmax(pred_prob)
+                pred_class = torch.argmax(pred_prob).detach()
                 if i >= validation_number:
                     if pred_class == target: correct += 1
                     total += 1
                 pred_all.append(torch.softmax(pred_prob, dim = 0).detach().cpu().numpy())
                 if (i >= 100 and i % self.evaluate_interval == 0) or i == train_x.shape[0] - 1 - self.window_size:
-                    if self.num_classes == 2:
-                        auc = sklearn.metrics.roc_auc_score(y[self.window_size - 1:(i + self.window_size)].cpu().numpy(), np.asarray(pred_all)[:, 1])
-                        print(i, loss.detach().cpu().numpy().item(), correct / total, pred_class, auc, pred_prob)
-                        pred_prob = pred_prob.detach().cpu().numpy()
-                        results.append([loss.detach().cpu().numpy().item(), correct / total, auc, pred_prob[0], pred_prob[1]])
-                    else:
-                        if i >= validation_number:
+                    if i >= validation_number:
+                        if self.num_classes == 2:
+                            auc = sklearn.metrics.roc_auc_score(y[self.window_size - 1:(i + self.window_size)].cpu().numpy(), np.asarray(pred_all)[:, 1])
+                            print(i, loss.detach().cpu().numpy().item(), correct / total, pred_class, auc, pred_prob)
+                            pred_prob = pred_prob.detach().cpu().numpy()
+                            results.append([loss.detach().cpu().numpy().item(), correct / total, auc, pred_prob[0], pred_prob[1]])
+                        else:
                             print(i, correct / total )
                             pred_prob = pred_prob.detach().cpu().numpy()
                             results.append(
@@ -191,11 +197,11 @@ class stream_density_wfa(nn.Module):
         else:
             if task == 'classification':
                 class_weights, tmp = self(prev, X)
-                class_weights = torch.mul(class_weights, self.prior.to(self.device))
+                # class_weights = torch.mul(class_weights, self.prior.to(self.device))
                 loss = nn.CrossEntropyLoss(label_smoothing=self.smoothing_factor)
-                one_hot_y = one_hot(y.reshape(-1), num_classes=self.num_classes).to(self.device)
-                reg = one_hot_y @ class_weights
-                task_loss = loss(class_weights.reshape(1, -1), y.reshape(-1)) - reg_weight * reg
+                # one_hot_y = one_hot(y.reshape(-1), num_classes=self.num_classes).to(self.device)
+                # reg = one_hot_y @ class_weights
+                task_loss = loss(class_weights.reshape(1, -1), y.reshape(-1))
                 return task_loss, tmp
             elif task == 'density':
                 likelihood, tmp = self(prev, X, prediction = False)
@@ -210,7 +216,7 @@ class stream_density_wfa(nn.Module):
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--r', default=64, type=int, help='hidden states size of the model')
-    parser.add_argument('--exp_data', default='hmm', help='dataset for the experiment')
+    parser.add_argument('--exp_data', default='weather', help='dataset for the experiment')
     parser.add_argument('--lr', default=0.001, type=float, help='learning rate')
     parser.add_argument('--nc', default=2, type=int, help='number of classes')
     parser.add_argument('--mix_n', default=20, type=int, help='number of mixture components')
@@ -221,21 +227,22 @@ import copy
 def normalize(X):
     lag = min(int(0.2*len(X)), 1000)
     tmp = copy.deepcopy(X[:lag+1])
-    # mean = np.mean(tmp, axis=0)
-    # std = np.std(tmp, axis=0)
-    # tmp = (tmp - mean) / std
-    # new_x[:lag+1] = tmp
-    # for i in range(lag+1, len(X)):
-    #     tmp = copy.deepcopy(X[i-lag:i])
-    #     mean = np.mean(tmp, axis=0)
-    #     std = np.std(tmp, axis=0)
-    #     tmp = (X[i] - mean)/std
-    #     new_x[i] = tmp
+    new_x = np.zeros(X.shape)
+    mean = np.mean(tmp, axis=0)
+    std = np.std(tmp, axis=0)
+    tmp = (tmp - mean) / std
+    new_x[:lag+1] = tmp
+    for i in range(lag+1, len(X)):
+        tmp = copy.deepcopy(X[i-lag:i])
+        mean = np.mean(tmp, axis=0)
+        std = np.std(tmp, axis=0)
+        tmp = (X[i] - mean)/std
+        new_x[i] = tmp
     #
     # tmp = X
-    mean = np.mean(tmp, axis = 0)
-    std = np.std(tmp, axis = 0)
-    new_x = (X - mean)/std
+    # mean = np.mean(tmp, axis = 0)
+    # std = np.std(tmp, axis = 0)
+    # new_x = (X - mean)/std
     return new_x
 
 if __name__ == '__main__':
@@ -307,10 +314,25 @@ if __name__ == '__main__':
     elif args.exp_data == 'MNIST':
         X, y = get_MNIST()
         file_dir = os.path.join(file_dir, 'datasets', 'MNIST')
+    elif args.exp_data == 'gisette':
+        X, y = get_gisette()
+        file_dir = os.path.join(file_dir, 'datasets', 'gisette')
     elif args.exp_data == 'overlap':
         X, y = get_overlap()
         X = normalize(X)
         file_dir = os.path.join(file_dir, 'datasets', 'overlap')
+
+    elif args.exp_data == 'letter':
+        X, y = get_letter()
+        # X = normalize(X)
+        file_dir = os.path.join(file_dir, 'datasets', 'letter')
+
+    elif args.exp_data == 'copy_paste':
+        X, y = get_copy_paste()
+        # X = normalize(X)
+        file_dir = os.path.join(file_dir, 'datasets', 'copy_paste')
+        evaluate_interval = 100
+
     elif args.exp_data == 'hmm':
         X, ground_truth_conditionals, ground_truth_joint = get_hmm(r= 3, N = 10000)
         evaluate_interval = 100
@@ -320,8 +342,9 @@ if __name__ == '__main__':
         np.savetxt('hmm_3_ground.csv', ground_truth_conditionals, delimiter=',')
         y = None
     validation_number = min(1000, int(len(X)*0.2))
+    # validation_number = len(X)
     if args.task == 'classification':
-        print(y)
+        # print(y)
         y = torch.tensor(y).type(torch.LongTensor).to(device)
         y = torch.tensor(y).reshape(-1, 1).to(device)
     X = torch.tensor(X).to(device)
@@ -341,11 +364,11 @@ if __name__ == '__main__':
 
     lr = args.lr
     validation_results = {}
-    all_mix_ns = [3]
+    all_mix_ns = [2, 4, 8, 16, 32, 64, 128]
     smoothing_factors = [0]
     seeds = [1993]
     window_sizes = [2]
-    for r in [3]:
+    for r in [2, 4, 8, 16, 32, 64, 128]:
         for mix_n in all_mix_ns:
             for sf in smoothing_factors:
                 for seed in seeds:
@@ -376,7 +399,7 @@ if __name__ == '__main__':
                             results, pred_all = model.fit(X[:validation_number], optimizer, y=None,
                                                           verbose=True, scheduler=None, task=args.task)
                         else:
-                            results, pred_all = model.fit(X[:validation_number], optimizer, y=y[:validation_number], verbose=True, scheduler=None, task=args.task)
+                            results, pred_all = model.fit(X[:validation_number], optimizer, y=y[:validation_number], validation_number = 0, verbose=True, scheduler=None, task=args.task)
 
                         if r not in validation_results:
                             validation_results[r] = {}
@@ -412,7 +435,7 @@ if __name__ == '__main__':
     optimizer = optim.Adam(model.parameters(), lr=lr, amsgrad=True)
     results, pred_all = model.fit(X, optimizer, y = y, validation_number = validation_number, verbose=True, scheduler = None, task=args.task)
     results = np.asarray(results)
-    results[:, -3] += 1.
+    # results[:, -3] += 1.
     if args.task == 'density':
         plt.plot(results[:, -3], label = 'model')
         plt.plot(ground_truth_conditionals, label = 'ground')
