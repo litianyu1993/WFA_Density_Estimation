@@ -290,7 +290,7 @@ class stream_density_wfa(nn.Module):
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--r', default=64, type=int, help='hidden states size of the model')
-    parser.add_argument('--exp_data', default='rialto', help='dataset for the experiment')
+    parser.add_argument('--exp_data', default='elec', help='dataset for the experiment')
     parser.add_argument('--lr', default=0.001, type=float, help='learning rate')
     parser.add_argument('--nc', default=2, type=int, help='number of classes')
     parser.add_argument('--mix_n', default=20, type=int, help='number of mixture components')
@@ -455,9 +455,9 @@ if __name__ == '__main__':
     lr = args.lr
     validation_results = {}
     all_mix_ns = [2, 4, 8, 16, 32, 63, 128, 256]
-    smoothing_factors = [0, 0.05, 0.1, 0.3]
+    smoothing_factors = [0, 0.01, 0.05, 0.1]
     seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-    window_sizes = [1, 3, 5, 7, 10]
+    window_sizes = [1, 3, 5, 7, 9]
     for r in [2, 4, 8, 16, 32, 63, 128, 256]:
         for mix_n in all_mix_ns:
             for sf in smoothing_factors:
@@ -493,19 +493,24 @@ if __name__ == '__main__':
 
                         if r not in validation_results:
                             validation_results[r] = {}
-                            validation_results[r]['parameters'] = [default_parameters]
-                            validation_results[r]['pred_all'] = [pred_all]
-                            if args.task == 'density':
-                                validation_results[r]['final_auc'] = [np.mean(np.asarray(results)[:, -3])]
-                            else:
-                                validation_results[r]['final_auc'] = [results[-1][-3]]
+                            validation_results[r]['parameters'] = []
+                            validation_results[r]['pred_all'] = []
+                            validation_results[r]['final_auc'] = []
+                        # if r not in validation_results:
+                        #     validation_results[r] = {}
+                        #     validation_results[r]['parameters'] = [default_parameters]
+                        #     validation_results[r]['pred_all'] = [pred_all]
+                        #     if args.task == 'density':
+                        #         validation_results[r]['final_auc'] = [np.mean(np.asarray(results)[:, -3])]
+                        #     else:
+                        #         validation_results[r]['final_auc'] = [results[-1][-3]]
+                        # else:
+                        validation_results[r]['pred_all'].append(pred_all)
+                        validation_results[r]['parameters'].append(default_parameters)
+                        if args.task == 'density':
+                            validation_results[r]['final_auc'].append(np.mean(np.asarray(results)[:, -3]))
                         else:
-                            validation_results[r]['pred_all'].append(pred_all)
-                            validation_results[r]['parameters'].append(default_parameters)
-                            if args.task == 'density':
-                                validation_results[r]['final_auc'] = [np.mean(np.asarray(results)[:, -3])]
-                            else:
-                                validation_results[r]['final_auc'] = [results[-1][-3]]
+                            validation_results[r]['final_auc'].append(results[-1][-3])
     # print(validation_results)
     mix_ns = {}
     max_auc = -9999999
@@ -513,12 +518,13 @@ if __name__ == '__main__':
     final_r = 1
     model = None
     pred_all = None
+
     for r in validation_results.keys():
         for i, auc in enumerate(validation_results[r]['final_auc']):
             if auc >= max_auc:
                 max_auc = auc
-                parameters = validation_results[r]['parameters'][i]
-                pred_all = validation_results[r]['pred_all'][i]
+                parameters = copy.deepcopy(validation_results[r]['parameters'][i])
+                pred_all = copy.deepcopy(validation_results[r]['pred_all'][i])
     print(parameters)
     if args.task == 'density': parameters['evaluate_interval'] = 1
     model = stream_density_wfa(parameters)
