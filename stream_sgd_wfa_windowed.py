@@ -241,7 +241,7 @@ class stream_density_wfa(nn.Module):
                     print(i, np.mean(np.asarray(results)[:, -1]))
 
                 results.append([loss.detach().cpu().numpy(), current_mse])
-            prev = self.transit_next_state(prev, train_x[i-lag].float()).detach()
+            prev = self.transit_next_state(prev, train_x[i-lag].float())
             # self.initial_bias = train_x[i]
         return results, pred_all
 
@@ -249,18 +249,17 @@ class stream_density_wfa(nn.Module):
         current = x
         current = encoding(self, current)
         if self.model == 'wfa':
-
             tmp = torch.einsum("d, i, idj -> j", current, prev.ravel(), self.A).reshape(1, -1)
-            tmp = torch.sigmoid(tmp)
+            tmp = torch.sigmoid(tmp).detach()
         elif self.model == 'lstm':
-            output, (state_h, state_c) = self.recurrent(X[:self.window_size].reshape([1, self.window_size, -1]),
+            output, (state_h, state_c) = self.recurrent(current.reshape([1, 1, -1]),
                                                         prev)
-            tmp = (state_h, state_c)
-
+            tmp = (state_h.detach(), state_c.detach())
 
         elif self.model == 'gru':
-            output, state_h = self.recurrent(X[:self.window_size].reshape([1, self.window_size, -1]), prev)
-            tmp = torch.sigmoid(state_h.detach())
+            output, state_h = self.recurrent(current.reshape([1, 1, -1]), prev)
+            tmp = state_h.detach()
+            # tmp = torch.sigmoid(state_h).detach
         return tmp
 
     def lossfunc(self, prev, X, task, y = None, reg_weight = 1.):
@@ -294,7 +293,7 @@ def get_args():
     parser.add_argument('--lr', default=0.001, type=float, help='learning rate')
     parser.add_argument('--nc', default=2, type=int, help='number of classes')
     parser.add_argument('--mix_n', default=20, type=int, help='number of mixture components')
-    parser.add_argument('--method', default='wfa', help='method to use')
+    parser.add_argument('--method', default='gru', help='method to use')
     parser.add_argument('--task', default='classification', help='task to perform')
     return parser
 import copy
