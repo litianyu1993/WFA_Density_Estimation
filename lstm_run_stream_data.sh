@@ -16,7 +16,7 @@ pip install --no-index -r requirements.txt
 
 for exp_data in covType elec outdoor poker rialto weather covTypetwoclasses sea mixeddrift hyperplane chess outdoor rialtotwoclasses pokertwoclasses interRBF movingRBF border COIL overlap
     do
-    for method in wfa
+    for method in lstm
     do
     python stream_sgd_wfa_windowed.py --exp_data $exp_data --method $method
     done
