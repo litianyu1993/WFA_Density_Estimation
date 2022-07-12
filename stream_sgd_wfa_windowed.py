@@ -7,6 +7,7 @@ from gradient_descent import *
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 from collections import Counter
 from matplotlib import pyplot as plt
+from scipy import linalg as la
 from nonstationary_HMM import incremental_HMM
 def one_hot(y, num_classes = 2):
     tmp = torch.ones(num_classes)*(0)
@@ -47,6 +48,24 @@ class stream_density_wfa(nn.Module):
         elif self.model == 'gru':
             self.recurrent = nn.GRU(input_size=self.d, hidden_size=self.r,
                                num_layers=self.num_layers, batch_first=True)
+        elif self.model == 'hippo':
+            q = np.arange(self.r, dtype=np.float64)
+            col, row = np.meshgrid(q, q)
+            r = 2 * q + 1
+            M = -(np.where(row >= col, r, 0) - np.diag(q))
+            T = np.sqrt(np.diag(2 * q + 1))
+            self.G = T @ M @ np.linalg.inv(T)
+            self.B = np.diag(T)[:, None]
+            # print(self.B.shape)
+            self.hippo_count = 1
+            tmp_core = torch.normal(0, self.init_std, [self.r, self.d, self.r])
+            self.A = nn.Parameter(tmp_core.clone().float().requires_grad_(True))
+
+            tmp_core = torch.normal(0, self.init_std, [self.r**2, self.r, self.r])
+            self.out = nn.Parameter(tmp_core.clone().float().requires_grad_(True))
+
+        # elif self.model == 'hippo':
+
 
         if self.num_classes is not None and self.task == 'classification':
             self.mu_outs = nn.ModuleList()
@@ -77,9 +96,10 @@ class stream_density_wfa(nn.Module):
         counts = torch.bincount(y[index - lag: index].reshape(-1))
         return counts/torch.sum(counts)
     def init_state(self, N):
-        if self.model == 'lstm':
+        if self.model == 'lstm' or self.model == 'hippo':
             return (torch.zeros(self.num_layers, N, self.r).to(device).float(),
                     torch.zeros(self.num_layers, N, self.r).to(device).float())
+
         else:
             return torch.zeros(self.num_layers, N, self.r).to(device).float()
     def forward(self, prev, X, prediction = False):
@@ -89,29 +109,67 @@ class stream_density_wfa(nn.Module):
             X = X.float().to(device)
 
         all_results = []
-        for i in range(self.window_size - 1):
+        next = X[self.window_size]
 
-            assert self.window_size >= 2
+        if self.model == 'hippo':
+            (h, c) = prev
+            Gt = self.G / self.hippo_count
+            tmpG = la.solve_triangular(np.eye(self.r) - Gt / 2, np.eye(self.r) + Gt / 2, lower=True)
+            tmpG = torch.tensor(tmpG).to(self.device).float()
+            Bt = self.B / self.hippo_count
+            tmpB = la.solve_triangular(np.eye(self.r) - Gt / 2, Bt, lower=True)
+            tmpB = torch.tensor(tmpB).to(self.device).float()
+            # print('tmpB', tmpB.shape)
+
+
+            current = X[0]
+            current = encoding(self, current)
+            h = torch.einsum("d, i, idj -> j", current, h.ravel(), self.A).reshape(1, -1)
+            h = torch.sigmoid(h)
+
+            c = c @ tmpG + h.detach().reshape(-1) * tmpB
+            tmpc = c.reshape(-1)
+            # print(tmpc.shape, h.reshape(-1).shape, self.out.shape)
+            h = h.reshape(-1)
+            tmp = torch.einsum("d, i, dij -> j", tmpc, h, self.out).reshape(1, -1)
+            # print(c.shape)
+
+            tmp_result = phi(self, next, tmp, prediction)
+
+
+            self.hippo_count += 1
+            return tmp_result, (h.detach(), c)
+        elif self.model == 'None':
+            tmp_result = phi(self, next, prev.ravel().reshape(1, -1), prediction)
+            return tmp_result, prev.detach()
+
+
+        for i in range(self.window_size):
+
+            assert self.window_size >= 1
             current = X[i]
-            next = X[i+1]
             current = encoding(self, current)
             if self.model == 'wfa':
+
                 tmp = torch.einsum("d, i, idj -> j", current, prev.ravel(), self.A).reshape(1, -1)
                 tmp = torch.sigmoid(tmp)
-                tmp_result = phi(self, next, tmp, prediction)
             elif self.model == 'lstm':
-                output, (state_h, state_c) = self.recurrent(current.reshape([1, 1, -1]), prev)
+                output, (state_h, state_c) = self.recurrent(X[:self.window_size].reshape([1, self.window_size, -1]),
+                                                            prev)
                 tmp = (state_h, state_c)
-                tmp_result = phi(self, next, tmp[0].reshape(1, -1), prediction)
+
+
             elif self.model == 'gru':
-                output, state_h = self.recurrent(current.reshape([1, 1, -1]), prev)
+                output, state_h = self.recurrent(X[:self.window_size].reshape([1, self.window_size, -1]), prev)
                 tmp = torch.sigmoid(state_h.detach())
-                tmp_result = phi(self, next, tmp.reshape(1, -1), prediction)
-            all_results.append(tmp_result)
+
         if self.model == 'lstm':
+            tmp_result = phi(self, next, tmp[0].reshape(1, -1), prediction)
             return tmp_result, (tmp[0].detach(), tmp[1].detach())
         else:
+            tmp_result = phi(self, next, tmp.reshape(1, -1), prediction)
             return tmp_result, tmp.detach()
+
 
     def fit(self,train_x, optimizer, y = None, verbose = True, scheduler = None, pred_all = None, validation_number = 0, task = 'classification'):
         if self.model == 'wfa':
@@ -124,29 +182,27 @@ class stream_density_wfa(nn.Module):
         results = []
         if pred_all is None:
             pred_all = []
-
-        for i in range(0, train_x.shape[0]-self.window_size):
+        true_label = []
+        lag = self.window_size - 1
+        for i in range(lag, train_x.shape[0]-self.window_size-1):
             # for param_group in optimizer.param_groups:
             #     param_group['lr'] = 0.001
             optimizer.zero_grad()
-            pred_prob, _ = self(prev, train_x[i:])
+            pred_prob, _ = self(prev, train_x[i - lag:])
             reg_weight = 1.
             if task =='regression':
-                pred, _ =  self(prev, train_x[i:], prediction = True)
-                loss, prev = self.lossfunc(prev, train_x[i:], y=train_x[i+1:], reg_weight = reg_weight, task = task)
+                pred, _ =  self(prev, train_x[i - lag:], prediction = True)
+                loss, _ = self.lossfunc(prev, train_x[i - lag:], y=train_x[i+1:], reg_weight = reg_weight, task = task)
             elif task == 'classification':
-                target = y[i+self.window_size-1]
-                # print(i, train_x[i], target)
-                loss, prev = self.lossfunc(prev, train_x[i:], y=target, reg_weight=reg_weight, task=task)
+                target = y[i+1]
+                true_label.append(target.cpu().numpy())
+                # print(i-lag, i-lag+self.window_size-1, i+1)
+                loss, _ = self.lossfunc(prev, train_x[i - lag:], y=target, reg_weight=reg_weight, task=task)
             elif task == 'density':
-                loss, prev = self.lossfunc(prev, train_x[i:], y = train_x[i+1:], task = task)
+                loss, _ = self.lossfunc(prev, train_x[i - lag:], y = train_x[i+1:], task = task)
 
 
             loss.backward()
-            # for name, param in self.named_parameters():
-            #     if param.grad is not None:
-            #         param_norm = param.grad.data.norm(2).detach()
-            #         print(name, param_norm)
             joint_likelihood += -loss.detach().cpu().numpy()
             optimizer.step()
             if scheduler is not None:
@@ -164,12 +220,12 @@ class stream_density_wfa(nn.Module):
                 if (i >= 100 and i % self.evaluate_interval == 0) or i == train_x.shape[0] - 1 - self.window_size:
                     if i >= validation_number:
                         if self.num_classes == 2:
-                            auc = sklearn.metrics.roc_auc_score(y[self.window_size - 1:(i + self.window_size)].cpu().numpy(), np.asarray(pred_all)[:, 1])
+                            auc = sklearn.metrics.roc_auc_score(np.asarray(true_label), np.asarray(pred_all)[:, 1])
                             print(i, loss.detach().cpu().numpy().item(), correct / total, pred_class, auc, pred_prob)
                             pred_prob = pred_prob.detach().cpu().numpy()
                             results.append([loss.detach().cpu().numpy().item(), correct / total, auc, pred_prob[0], pred_prob[1]])
                         else:
-                            print(i, correct / total )
+                            print(i, correct / total, pred_prob[0].detach(), pred_prob[1].detach())
                             pred_prob = pred_prob.detach().cpu().numpy()
                             results.append(
                                 [loss.detach().cpu().numpy().item(), correct / total, pred_prob[0], pred_prob[1]])
@@ -185,9 +241,27 @@ class stream_density_wfa(nn.Module):
                     print(i, np.mean(np.asarray(results)[:, -1]))
 
                 results.append([loss.detach().cpu().numpy(), current_mse])
-
+            prev = self.transit_next_state(prev, train_x[i-lag].float()).detach()
             # self.initial_bias = train_x[i]
         return results, pred_all
+
+    def transit_next_state(self, prev, x):
+        current = x
+        current = encoding(self, current)
+        if self.model == 'wfa':
+
+            tmp = torch.einsum("d, i, idj -> j", current, prev.ravel(), self.A).reshape(1, -1)
+            tmp = torch.sigmoid(tmp)
+        elif self.model == 'lstm':
+            output, (state_h, state_c) = self.recurrent(X[:self.window_size].reshape([1, self.window_size, -1]),
+                                                        prev)
+            tmp = (state_h, state_c)
+
+
+        elif self.model == 'gru':
+            output, state_h = self.recurrent(X[:self.window_size].reshape([1, self.window_size, -1]), prev)
+            tmp = torch.sigmoid(state_h.detach())
+        return tmp
 
     def lossfunc(self, prev, X, task, y = None, reg_weight = 1.):
         if y is None:
@@ -199,9 +273,9 @@ class stream_density_wfa(nn.Module):
                 class_weights, tmp = self(prev, X)
                 # class_weights = torch.mul(class_weights, self.prior.to(self.device))
                 loss = nn.CrossEntropyLoss(label_smoothing=self.smoothing_factor)
-                # one_hot_y = one_hot(y.reshape(-1), num_classes=self.num_classes).to(self.device)
-                # reg = one_hot_y @ class_weights
-                task_loss = loss(class_weights.reshape(1, -1), y.reshape(-1))
+                one_hot_y = one_hot(y.reshape(-1), num_classes=self.num_classes).to(self.device)
+                reg = one_hot_y @ class_weights
+                task_loss = loss(class_weights.reshape(1, -1), y.reshape(-1))# - reg_weight * reg
                 return task_loss, tmp
             elif task == 'density':
                 likelihood, tmp = self(prev, X, prediction = False)
@@ -216,7 +290,7 @@ class stream_density_wfa(nn.Module):
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--r', default=64, type=int, help='hidden states size of the model')
-    parser.add_argument('--exp_data', default='weather', help='dataset for the experiment')
+    parser.add_argument('--exp_data', default='rialto', help='dataset for the experiment')
     parser.add_argument('--lr', default=0.001, type=float, help='learning rate')
     parser.add_argument('--nc', default=2, type=int, help='number of classes')
     parser.add_argument('--mix_n', default=20, type=int, help='number of mixture components')
@@ -265,9 +339,9 @@ if __name__ == '__main__':
         file_dir = os.path.join(file_dir, 'artificial', 'sea')
     elif args.exp_data == 'elec':
         X, y = get_electronic_data()
-        X = X[:, 2:]
         X = normalize(X)
         file_dir = os.path.join(file_dir, 'realWorld', 'Elec2')
+
     elif args.exp_data == 'mixeddrift':
         X, y = get_mixeddrift()
         file_dir = os.path.join(file_dir, 'artificial', 'mixedDrift')
@@ -282,16 +356,28 @@ if __name__ == '__main__':
         X, y = get_outdoor()
         evaluate_interval = 100
         file_dir = os.path.join(file_dir, 'realWorld', 'outdoor')
-    elif args.exp_data == 'covType':
-        X, y = get_covtype()
-        X = normalize(X[:, :10])
+    elif args.exp_data == 'covTypetwoclasses':
+        X, y = get_covtype(two_classes=True)
+        X = normalize(X)
         file_dir = os.path.join(file_dir, 'realWorld', 'covType')
         evaluate_interval = 1000
+    elif args.exp_data == 'covType':
+        X, y = get_covtype(two_classes=False)
+        X = normalize(X)
+        file_dir = os.path.join(file_dir, 'realWorld', 'covType')
+        evaluate_interval = 1000
+    elif args.exp_data == 'rialtotwoclasses':
+        X, y = get_rialto(two_classes=True)
+        file_dir = os.path.join(file_dir, 'realWorld', 'rialto')
     elif args.exp_data == 'rialto':
-        X, y = get_rialto()
+        X, y = get_rialto(two_classes=False)
         file_dir = os.path.join(file_dir, 'realWorld', 'rialto')
     elif args.exp_data == 'poker':
-        X, y = get_poker()
+        X, y = get_poker(two_classes=False)
+        file_dir = os.path.join(file_dir, 'realWorld', 'poker')
+        evaluate_interval = 1000
+    elif args.exp_data == 'pokertwoclasses':
+        X, y = get_poker(two_classes=True)
         file_dir = os.path.join(file_dir, 'realWorld', 'poker')
         evaluate_interval = 1000
     elif args.exp_data == 'interRBF':
@@ -321,6 +407,10 @@ if __name__ == '__main__':
         X, y = get_overlap()
         X = normalize(X)
         file_dir = os.path.join(file_dir, 'datasets', 'overlap')
+    elif args.exp_data == 'isolet':
+        X, y = get_isolet()
+        X = normalize(X)
+        file_dir = os.path.join(file_dir, 'datasets', 'isolet')
 
     elif args.exp_data == 'letter':
         X, y = get_letter()
@@ -328,7 +418,7 @@ if __name__ == '__main__':
         file_dir = os.path.join(file_dir, 'datasets', 'letter')
 
     elif args.exp_data == 'copy_paste':
-        X, y = get_copy_paste()
+        X, y = get_copy_paste(lag =10, n = 10000)
         # X = normalize(X)
         file_dir = os.path.join(file_dir, 'datasets', 'copy_paste')
         evaluate_interval = 100
@@ -364,11 +454,11 @@ if __name__ == '__main__':
 
     lr = args.lr
     validation_results = {}
-    all_mix_ns = [2, 4, 8, 16, 32, 64, 128]
-    smoothing_factors = [0]
-    seeds = [1993]
-    window_sizes = [2]
-    for r in [2, 4, 8, 16, 32, 64, 128]:
+    all_mix_ns = [2, 4, 8, 16, 32, 63, 128, 256]
+    smoothing_factors = [0, 0.05, 0.1, 0.3]
+    seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    window_sizes = [1, 3, 5, 7, 10]
+    for r in [2, 4, 8, 16, 32, 63, 128, 256]:
         for mix_n in all_mix_ns:
             for sf in smoothing_factors:
                 for seed in seeds:

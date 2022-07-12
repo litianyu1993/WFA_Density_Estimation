@@ -14,14 +14,16 @@ def get_lr(gamma, optimizer):
             for group in optimizer.param_groups]
 
 
-def get_copy_paste(n =100, d = 3, lag = 10, seed = 1993):
+
+def get_copy_paste(n =1000, d = 3, lag = 10, seed = 1993):
+
     np.random.seed(seed)
     X = np.random.normal(0, 1, size = [n, d])
     y = []
     y_neg = 0
     y_pos = 0
     for i in range(n):
-        if X[i-lag][0] - X[i][0] <= 0:
+        if X[i - lag][0]<= 0:
             y.append(1)
             y_pos += 1
         else:
@@ -30,8 +32,6 @@ def get_copy_paste(n =100, d = 3, lag = 10, seed = 1993):
     y = np.asarray(y)
     print(y_pos, y_neg, y_pos/n)
     print(naive_prediction(y))
-    print(X[:10])
-    print(y[:10])
     return X, y
 
 def naive_prediction(y):
@@ -228,7 +228,7 @@ def get_letter():
     y = np.asarray(y).reshape(-1, 1)
     return X, y
 
-def get_poker():
+def get_poker(two_classes = True):
     X = np.genfromtxt(
         os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'poker', 'poker.data'),
         delimiter=' ')
@@ -241,31 +241,34 @@ def get_poker():
     #     # print(X[:, i].astype(int))
     #     new_x.append(np.eye(n_values)[X[:, i].astype(int)])
     # X = np.concatenate(new_x, axis=1)
-    print('onehot', X.shape)
-    num_per_class = {}
-    for i in range(len(y)):
-        if y[i] not in num_per_class:
-            num_per_class[y[i]] = 0
-        else:
-            num_per_class[y[i]] += 1
-    import operator
-    index1 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
-    del num_per_class[index1]
-    index2 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
-
-    new_X = []
-    new_y = []
-    for i in range(len(y)):
-        if y[i] == index1 or y[i] == index2:
-            new_X.append(X[i])
-            if y[i] == index1:
-                new_y.append(0)
+    if two_classes:
+        num_per_class = {}
+        for i in range(len(y)):
+            if y[i] not in num_per_class:
+                num_per_class[y[i]] = 0
             else:
-                new_y.append(1)
-    new_y, new_X = np.asarray(new_y), np.asarray(new_X)
-    return new_X, new_y
+                num_per_class[y[i]] += 1
+        import operator
+        index1 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
+        del num_per_class[index1]
+        index2 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
 
-def get_rialto():
+        new_X = []
+        new_y = []
+        for i in range(len(y)):
+            if y[i] == index1 or y[i] == index2:
+                new_X.append(X[i])
+                if y[i] == index1:
+                    new_y.append(0)
+                else:
+                    new_y.append(1)
+        new_y, new_X = np.asarray(new_y), np.asarray(new_X)
+        return new_X, new_y
+    else:
+        return X, y
+
+def get_rialto(two_classes = False):
+
     X = np.genfromtxt(
         os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'rialto', 'rialto.data'),
         delimiter=' ')
@@ -273,30 +276,35 @@ def get_rialto():
         os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'rialto', 'rialto.labels'),
         delimiter=' ')
 
-    num_per_class = {}
-    for i in range(len(y)):
-        if y[i] not in num_per_class:
-            num_per_class[y[i]] = 0
-        else:
-            num_per_class[y[i]] += 1
-    import operator
-    index1 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
-    del num_per_class[index1]
-    index2 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
-
-    new_X = []
-    new_y = []
-    for i in range(len(y)):
-        if y[i] == index1 or y[i] == index2:
-            new_X.append(X[i])
-            if y[i] == index1:
-                new_y.append(0)
+    if two_classes:
+        num_per_class = {}
+        for i in range(len(y)):
+            if y[i] not in num_per_class:
+                num_per_class[y[i]] = 0
             else:
-                new_y.append(1)
-    new_y, new_X = np.asarray(new_y), np.asarray(new_X)
-    return new_X, new_y
+                num_per_class[y[i]] += 1
+        import operator
+        index1 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
+        del num_per_class[index1]
+        index2 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
 
-def get_covtype():
+        new_X = []
+        new_y = []
+        for i in range(len(y)):
+            if y[i] == index1 or y[i] == index2:
+                new_X.append(X[i])
+                if y[i] == index1:
+                    new_y.append(0)
+                else:
+                    new_y.append(1)
+        new_y, new_X = np.asarray(new_y), np.asarray(new_X)
+        return new_X, new_y
+    else:
+        return X, y
+
+
+def get_covtype(two_classes = True):
+
     from scipy.io import arff
     import pandas as pd
     file = os.path.join(os.path.dirname(os.path.realpath('__file__')), 'realWorld', 'covType', 'covType.arff')
@@ -305,28 +313,32 @@ def get_covtype():
     a = a.to_numpy().astype('float')
     X = a[:, :-1]
     y = a[:, -1].astype('int') - 1
-    # num_per_class = {}
-    # for i in range(len(y)):
-    #     if y[i] not in num_per_class:
-    #         num_per_class[y[i]] = 0
-    #     else:
-    #         num_per_class[y[i]] += 1
-    # import operator
-    # index1 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
-    # del num_per_class[index1]
-    # index2 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
-    #
-    # new_X = []
-    # new_y = []
-    # for i in range(len(y)):
-    #     if y[i] == index1 or y[i] == index2:
-    #         new_X.append(X[i])
-    #         if y[i] == index1:
-    #             new_y.append(0)
-    #         else:
-    #             new_y.append(1)
-    # new_y, new_X = np.asarray(new_y), np.asarray(new_X)
-    return X, y
+    if two_classes:
+        num_per_class = {}
+        for i in range(len(y)):
+            if y[i] not in num_per_class:
+                num_per_class[y[i]] = 0
+            else:
+                num_per_class[y[i]] += 1
+        import operator
+        index1 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
+        del num_per_class[index1]
+        index2 = max(num_per_class.items(), key=operator.itemgetter(1))[0]
+
+        new_X = []
+        new_y = []
+        for i in range(len(y)):
+            if y[i] == index1 or y[i] == index2:
+                new_X.append(X[i])
+                if y[i] == index1:
+                    new_y.append(0)
+                else:
+                    new_y.append(1)
+        new_y, new_X = np.asarray(new_y), np.asarray(new_X)
+        return new_X, new_y
+    else:
+        return X, y
+
 
 def get_mixeddrift():
     X = np.genfromtxt(
@@ -407,6 +419,15 @@ def get_overlap():
         os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'overlap',
                      'overlap-train.labels'),
         delimiter=' ')
+    return X, y
+def get_isolet():
+    X = np.genfromtxt(
+        os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'isolet',
+                     'isolet.data'),
+        delimiter=',')
+    y = X[:, -1]
+    X = X[:, :-1]
+    y -= 1
     return X, y
 
 def get_gisette():
