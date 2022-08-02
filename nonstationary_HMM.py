@@ -5,17 +5,22 @@ import torch.distributions as D
 from torch.distributions import Normal, mixture_same_family
 from Density_WFA_finetune import learn_density_WFA
 from hmmlearn import hmm
-
+import copy
 class incremental_HMM(nn.Module):
 
-    def __init__(self, r):
+    def __init__(self, r, seed = 1993):
+        np.random.seed(seed)
         super().__init__()
+        # print('current rank is ', r)
         self.transition = torch.rand([r, r])
         self.transition = torch.softmax(self.transition, dim = 1)
-        self.sig = torch.ones(r).reshape([1, r])
+        self.sig = torch.rand(r).reshape([1, r])
         self.init_w = torch.rand([1, r])
         self.init_w = torch.softmax(self.init_w, dim = 1)
-        self.mu_rates = (torch.arange(r)*0.1).reshape([1, r])
+        self.mu_rates = torch.rand(r).reshape([1, r])
+        np.random.seed(seed)
+        self.seed = seed
+        torch.manual_seed(self.seed)
 
 
     def torch_mixture_gaussian(self, mu, sig, h):
@@ -26,27 +31,51 @@ class incremental_HMM(nn.Module):
 
     def sample_from_gmm(self, gmm, n):
         # print(gmm.sample([n]))
+
         return gmm.sample([n])
 
-    def evalue_log_likelihood(self, X):
-        h = self.init_w
-        log_prob = 0.
-        for i in range(X.shape[2]):
-            mu = i*self.mu_rates
-            gmm = self.torch_mixture_gaussian(mu, self.sig, h)
-            log_prob += gmm.log_prob(X[:, :, i])
-            h = h @ self.transition
-        return torch.mean(log_prob)
 
-    def sample(self, n, l):
+    def score(self, X, stream = False):
+        import copy
         h = self.init_w
-        samples = torch.zeros([n, 1, l])
-        for i in range(l):
-            mu = i * self.mu_rates
+        joint = 0.
+        if stream:
+            all_probs = []
+            all_conditionals = []
+        mu = copy.deepcopy(self.mu_rates)
+        for i in range(X.shape[0]):
+            # if i % 300 == 0:
+            #     mu+=10
             gmm = self.torch_mixture_gaussian(mu, self.sig, h)
-            current_sample = self.sample_from_gmm(gmm, n)
-            samples[:, :, i] = current_sample
+            tmp = gmm.log_prob(torch.tensor(X[i, :]))
+            joint += tmp
             h = h @ self.transition
+            if stream:
+                all_probs.append(copy.deepcopy(joint.numpy()))
+                all_conditionals.append(tmp.numpy())
+            # print(i, h)
+            # print(i, 'scoring', mu.reshape(1, -1)@h.reshape(-1, 1))
+        if stream:
+            return all_probs, all_conditionals
+        else:
+            return joint.numpy()
+
+
+
+    def sample(self, l, seed = 1993):
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        h = self.init_w
+        samples = torch.zeros([1, l])
+        mu = copy.deepcopy(self.mu_rates)
+        for i in range(l):
+            # if i % 300 ==0:
+            #     mu += 10
+            gmm = self.torch_mixture_gaussian(mu, self.sig, h)
+            current_sample = self.sample_from_gmm(gmm, 1)
+            samples[:, i] = current_sample
+            h = h @ self.transition
+            # print(i,'sampling', mu.reshape(1, -1)@h.reshape(-1, 1))
         return samples
 
 def fit_gmm(X, lens, r):
@@ -59,11 +88,11 @@ if __name__ == '__main__':
     load = False
     data_label = [['train_l', 'test_l'], ['train_2l', 'test_2l'], ['train_2l1', 'test_2l1']]
 
-    N = 10000  # number of training samples
+    N = 1  # number of training samples
     d = 3  # input encoder output dimension
     xd = 1  # input dimension
     r = 3  # rank/number of mixtures
-    l = 3  # length in trianning (l, 2l, 2l+1)
+    l = 1000  # length in trianning (l, 2l, 2l+1)
     Ls = [l, 2 * l, 2 * l + 1]
     mixture_n = r
 

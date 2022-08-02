@@ -4,7 +4,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 from hmmlearn import hmm
 from Dataset import *
 from torch import optim
-from neural_density_estimation import hankel_density, ground_truth_hmm, insert_bias
+from neural_density_estimation import hankel_density, ground_truth_hmm
 import pickle
 import torch.distributions as D
 from torch.distributions import Normal, mixture_same_family
@@ -14,6 +14,8 @@ class density_wfa(nn.Module):
     def __init__(self, hd, h2d, h2d1, init_std = 0.1, device = device, double_pre = False):
         super().__init__()
         self.l = len(hd.core_list)
+        for i in range(len(hd.core_list)):
+            print(hd.core_list[i].shape)
         self.d = hd.core_list[0].shape[0]
         self.r = hd.core_list[0].shape[1]
 
@@ -22,23 +24,22 @@ class density_wfa(nn.Module):
         self.hankel_l = hd.core_list
         self.hankel_2l1 = h2d1.core_list
 
-        self.nade_layers = hd.nade_layers
-        self.mu_out = hd.mu_out
-        self.sig_out = hd.sig_out
-        self.alpha_out = hd.alpha_out
-        self.encoder_1 = hd.encoder_1
-        self.encoder_2 = hd.encoder_2
-        # self.encoder_bn = hd.encoder_bn
-        self.scale = 1.
+        self.nade_layers = h2d1.nade_layers
+        self.mu_out = h2d1.mu_out
+        self.sig_out = h2d1.sig_out
+        self.alpha_out = h2d1.alpha_out
+        self.encoder_1 = h2d1.encoder_1
+        self.encoder_2 = h2d1.encoder_2
 
-        # self.A =torch.normal(0, init_std, [self.r, self.d, self.r]).float()
-        # self.init_w = torch.normal(0, init_std, [1, self.r]).float()
-        self.init_w, self.A, self.scale = self.spectral_learning()
+
+        self.A =torch.normal(0, init_std, [self.r, self.d, self.r]).float()
+        self.init_w = torch.normal(0, init_std, [1, self.r]).float()
+        self.spectral_learning()
         self.double_pre = double_pre
         if double_pre:
-            self.double().cuda()
+            self.double().to(device)
         else:
-            self.float().cuda()
+            self.to(device)
 
     def encoding(self, X):
         X = self.encoder_1(X)
@@ -48,9 +49,9 @@ class density_wfa(nn.Module):
 
     def forward(self, X):
         if self.double_pre:
-            X = X.double().cuda()
+            X = X.double().to(device)
         else:
-            X = X.float().cuda()
+            X = X.to(device)
 
         result = 0.
 
@@ -60,10 +61,10 @@ class density_wfa(nn.Module):
             else:
                 tmp = torch.einsum("nd, ni, idj -> nj", self.encoding(X[:, :, i - 1]), tmp, self.A)
             # print(result, self.phi(X, tmp).shape)
-            tmp_result = self.phi(X[:, :, i].squeeze(), tmp*(self.scale**i))
+            tmp_result = self.phi(X[:, :, i].squeeze(), tmp)
             # print(i, tmp_result)
             result = result + tmp_result
-        return result
+        return torch.exp(result)
 
     def list_to_tensor(self, core_list):
         tmp = core_list[0].detach()
@@ -80,12 +81,10 @@ class density_wfa(nn.Module):
         h2l = self.list_to_tensor(self.hankel_2l)
         h2l1 = self.list_to_tensor(self.hankel_2l1)
 
+        # print(h2l.shape)
         H2l = (h2l.reshape([self.d ** self.l, self.d ** self.l * self.r]))
-        print(H2l)
         H_2l1 = (h2l1.reshape([self.d ** self.l, self.d, self.d ** self.l * self.r]))
         H_l = (hl.ravel())
-
-
 
         U, s, V = torch.linalg.svd(H2l)
         U = U[:, :self.r]
@@ -98,18 +97,9 @@ class density_wfa(nn.Module):
 
         A = torch.tensordot(Pinv, H_2l1, dims=([1], [0]))
         A = torch.tensordot(A, Sinv, dims=([-1], [0]))
-
-        max_singular_value = 0
-        # for i in range(A.shape[1]):
-        #     # u, s, v = torch.linalg.svd(A[:, i, :])
-        #     s = torch.linalg.svdvals(A[:, i, :])
-        #     if max_singular_value < s[0]:
-        #         max_singular_value = s[0]
-        # A = A/(max_singular_value*A.shape[1])
-
         alpha = torch.tensordot(Sinv.T, H_l.ravel().reshape(-1, 1), dims=([-1], [0]))
-
-        return alpha.T, A, max_singular_value*A.shape[1]
+        self.init_w = alpha.T
+        self.A = A
 
     def torch_mixture_gaussian(self, X, mu, sig, alpha):
         mix = D.Categorical(alpha)
@@ -217,10 +207,3 @@ if __name__ == '__main__':
         dwfa = density_wfa(hds[1], hds[2], hds[0], double_pre=double_precision)
         likelihood = dwfa(train_x)
         print(torch.mean(torch.log(likelihood)), train_ground_truth)
-
-
-
-
-
-
-
