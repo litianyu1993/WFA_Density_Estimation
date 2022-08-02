@@ -16,7 +16,7 @@ for exp_data in covType elec outdoor poker rialto weather covTypetwoclasses sea 
     do
     for method in lstm
     do
-    python stream_sgd_wfa_windowed.py --exp_data $exp_data --method $method
+    python stream_sgd_wfa_windowed.py --exp_data $exp_data --method $method --ne 200
     done
 done
 
