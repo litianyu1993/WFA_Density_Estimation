@@ -360,7 +360,7 @@ if __name__ == '__main__':
     elif args.exp_data == 'chess':
         X, y = get_chess()
         X = normalize(X)
-        evaluate_interval = 1000
+        evaluate_interval = 999
         file_dir = os.path.join(file_dir, 'artificial', 'chess')
     elif args.exp_data == 'outdoor':
         X, y = get_outdoor()
@@ -370,14 +370,15 @@ if __name__ == '__main__':
         X, y = get_covtype(two_classes=True)
         X = normalize(X)
         file_dir = os.path.join(file_dir, 'realWorld', 'covType')
-        evaluate_interval = 1000
+        evaluate_interval = 999
     elif args.exp_data == 'covType':
         X, y = get_covtype(two_classes=False)
         X = normalize(X)
         file_dir = os.path.join(file_dir, 'realWorld', 'covType')
-        evaluate_interval = 1000
+        evaluate_interval = 999
     elif args.exp_data == 'rialtotwoclasses':
         X, y = get_rialto(two_classes=True)
+        X = normalize(X)
         file_dir = os.path.join(file_dir, 'realWorld', 'rialto')
     elif args.exp_data == 'rialto':
         X, y = get_rialto(two_classes=False)
@@ -386,7 +387,7 @@ if __name__ == '__main__':
     elif args.exp_data == 'poker':
         X, y = get_poker(two_classes=False)
         file_dir = os.path.join(file_dir, 'realWorld', 'poker')
-        evaluate_interval = 1000
+        evaluate_interval = 999
     elif args.exp_data == 'pokertwoclasses':
         X, y = get_poker(two_classes=True)
         file_dir = os.path.join(file_dir, 'realWorld', 'poker')
@@ -395,12 +396,12 @@ if __name__ == '__main__':
         X, y = get_interRBF()
         X = normalize(X)
         file_dir = os.path.join(file_dir, 'artificial', 'rbf')
-        evaluate_interval = 1000
+        evaluate_interval = 999
     elif args.exp_data == 'movingRBF':
         X, y = get_movingRBF()
         X = normalize(X)
         file_dir = os.path.join(file_dir, 'artificial', 'rbf')
-        evaluate_interval = 1000
+        evaluate_interval = 999
     elif args.exp_data == 'border':
         X, y = get_border()
         X = normalize(X)
@@ -501,8 +502,9 @@ if __name__ == '__main__':
                             results, pred_all = model.fit(X[:validation_number], optimizer, y=None,
                                                           verbose=True, scheduler=None, task=args.task)
                         else:
-                            results, pred_all = model.fit(X[:validation_number], optimizer, y=y[:validation_number], validation_number = 0, verbose=True, scheduler=None, task=args.task)
 
+                            results, pred_all = model.fit(X[:validation_number], optimizer, y=y[:validation_number], validation_number = 0, verbose=True, scheduler=None, task=args.task)
+                            print(results)
                         if r not in validation_results:
                             validation_results[r] = {}
                             validation_results[r]['parameters'] = []
