@@ -444,7 +444,7 @@ if __name__ == '__main__':
         np.savetxt('hmm_3_ground.csv', ground_truth_conditionals, delimiter=',')
         y = None
     validation_number = min(1000, int(len(X)*0.2))
-    validation_number = len(X)
+    # validation_number = len(X)
     if args.task == 'classification':
         # print(y)
         y = torch.tensor(y).type(torch.LongTensor).to(device)
