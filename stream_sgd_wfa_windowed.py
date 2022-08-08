@@ -466,11 +466,11 @@ if __name__ == '__main__':
 
     lr = args.lr
     validation_results = {}
-    all_mix_ns = [2, 4, 8, 16, 32, 63, 128, 256]
-    smoothing_factors = [0, 0.01, 0.05, 0.1]
-    seeds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    all_mix_ns = [2, 8, 16, 64, 128]
+    smoothing_factors = [0, 0.1, 0.3]
+    seeds = [1, 3, 5, 7, 9]
     window_sizes = [1, 3, 5, 7, 9]
-    for r in [2, 4, 8, 16, 32, 63, 128, 256]:
+    for r in [2, 8, 16, 64, 128]:
         for mix_n in all_mix_ns:
             for sf in smoothing_factors:
                 for seed in seeds:
