@@ -360,7 +360,7 @@ if __name__ == '__main__':
     elif args.exp_data == 'chess':
         X, y = get_chess()
         X = normalize(X)
-        evaluate_interval = 999
+        evaluate_interval = 950
         file_dir = os.path.join(file_dir, 'artificial', 'chess')
     elif args.exp_data == 'outdoor':
         X, y = get_outdoor()
@@ -370,12 +370,12 @@ if __name__ == '__main__':
         X, y = get_covtype(two_classes=True)
         X = normalize(X)
         file_dir = os.path.join(file_dir, 'realWorld', 'covType')
-        evaluate_interval = 999
+        evaluate_interval = 950
     elif args.exp_data == 'covType':
         X, y = get_covtype(two_classes=False)
         X = normalize(X)
         file_dir = os.path.join(file_dir, 'realWorld', 'covType')
-        evaluate_interval = 999
+        evaluate_interval = 950
     elif args.exp_data == 'rialtotwoclasses':
         X, y = get_rialto(two_classes=True)
         X = normalize(X)
@@ -387,7 +387,7 @@ if __name__ == '__main__':
     elif args.exp_data == 'poker':
         X, y = get_poker(two_classes=False)
         file_dir = os.path.join(file_dir, 'realWorld', 'poker')
-        evaluate_interval = 999
+        evaluate_interval = 950
     elif args.exp_data == 'pokertwoclasses':
         X, y = get_poker(two_classes=True)
         file_dir = os.path.join(file_dir, 'realWorld', 'poker')
@@ -396,12 +396,12 @@ if __name__ == '__main__':
         X, y = get_interRBF()
         X = normalize(X)
         file_dir = os.path.join(file_dir, 'artificial', 'rbf')
-        evaluate_interval = 999
+        evaluate_interval = 950
     elif args.exp_data == 'movingRBF':
         X, y = get_movingRBF()
         X = normalize(X)
         file_dir = os.path.join(file_dir, 'artificial', 'rbf')
-        evaluate_interval = 999
+        evaluate_interval = 950
     elif args.exp_data == 'border':
         X, y = get_border()
         X = normalize(X)
