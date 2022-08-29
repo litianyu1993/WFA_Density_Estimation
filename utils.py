@@ -49,6 +49,10 @@ class incremental_HMM(nn.Module):
         # print('current rank is ', r)
         self.transition = torch.rand([r, r])
         self.transition = torch.softmax(self.transition, dim = 1)
+
+        self.transition2 = torch.normal(2, 1, [r, r])
+        self.transition2 = torch.softmax(self.transition, dim=1)
+        # print(self.transition)
         self.sig = torch.ones(r).reshape([1, r])
         self.init_w = torch.rand([1, r])
         self.init_w = torch.softmax(self.init_w, dim = 1)
@@ -65,59 +69,66 @@ class incremental_HMM(nn.Module):
         return gmm
 
     def sample_from_gmm(self, gmm, n):
-        # print(gmm.sample([n]))
 
         return gmm.sample([n])
+
 
 
     def score(self, X, stream = False):
         import copy
         h = self.init_w
-        joint = 0.
         if stream:
-            all_probs = []
             all_conditionals = []
         mu = copy.deepcopy(self.mu_rates)
-        for i in range(X.shape[0]):
+        sig = copy.deepcopy(self.sig)
+        density = np.zeros(X.shape)
+        for i in range(X.shape[1]):
             if i % 100 == 0:
-                mu+=10
-            gmm = self.torch_mixture_gaussian(mu, self.sig, h)
-            tmp = gmm.log_prob(torch.tensor(X[i, :]))
-            joint += tmp
-            h = h @ self.transition
-            if stream:
-                all_probs.append(copy.deepcopy(joint.numpy()))
-                all_conditionals.append(tmp.numpy())
+                mu += 1
+                sig += 1
+            gmm = self.torch_mixture_gaussian(mu, sig, h)
+            for j in range(X.shape[2]):
+                tmp = gmm.log_prob(torch.tensor(X[:, i, j]))
+                if stream:
+                    density[0, i, j] = tmp
+            # if i % 1 == 0 and i % 2 != 0:
+            #     h = h @ self.transition
+            # if i %2 ==0:
+            #     h = h @ self.transition2
+
             # print(i, h)
             # print(i, 'scoring', mu.reshape(1, -1)@h.reshape(-1, 1))
         if stream:
-            return all_probs, all_conditionals
-        else:
-            return joint.numpy()
+            return density
 
-    def sample(self, l, seed = 1993):
+    def sample(self, l, n= 500, seed = 1993):
         np.random.seed(seed)
         torch.manual_seed(seed)
         h = self.init_w
-        samples = torch.zeros([1, l])
+
+        samples = torch.zeros([1, l, n])
         mu = copy.deepcopy(self.mu_rates)
+        sig = copy.deepcopy(self.sig)
         for i in range(l):
-            if i % 100 ==0:
-                mu += 10
-            gmm = self.torch_mixture_gaussian(mu, self.sig, h)
-            current_sample = self.sample_from_gmm(gmm, 1)
-            samples[:, i] = current_sample
-            h = h @ self.transition
+            if i % 100 == 0:
+                mu += 1
+                sig += 1
+            gmm = self.torch_mixture_gaussian(mu, sig, h)
+            current_sample = self.sample_from_gmm(gmm, n).reshape(-1)
+            samples[:, i, :] = current_sample
+            # if i % 1 == 0 and i % 2 != 0:
+            #     h = h @ self.transition
+            # if i % 2 == 0:
+            #     h = h @ self.transition2
             # print(i,'sampling', mu.reshape(1, -1)@h.reshape(-1, 1))
         return samples
 def get_hmm(r = 3, N = 1000):
     nshmm = incremental_HMM(r=r)
-    X = nshmm.sample(N)
-    X = np.asarray(X).swapaxes(0, 1)
-    ground_truth_joint, ground_truth_conditionals = nshmm.score(X, stream = True)
+    X = nshmm.sample(l=N)
+    # X = np.asarray(X).swapaxes(0, 1)
+    ground_truth_conditionals = nshmm.score(X, stream = True)
     ground_truth_conditionals = np.asarray(ground_truth_conditionals)
-    ground_truth_joint = np.asarray(ground_truth_joint)
-    return X, ground_truth_conditionals, ground_truth_joint
+    return X, ground_truth_conditionals
 
 def sliding_window(X, window_size = 5):
     final_data = []
@@ -559,12 +570,13 @@ def phi(model, X, h, prediction = False, use_relu = False):
             for i in range(mu.shape[-1]):
                 mu[:, :, i] = mu[:, :, i] +  model.initial_bias[i]
 
+
         sig = model.sig_out(h)
         sig = torch.exp(sig)
         sig = sig.reshape(mu.shape[0], -1, model.xd)
         tmp = model.alpha_out(h)
         alpha = torch.softmax(tmp, dim=1)
-        return torch_mixture_gaussian(X, mu, sig, alpha, prediction)
+        return torch_mixture_gaussian(X, mu, sig, alpha, prediction), (mu, sig, alpha)
     else:
         probs = torch.ones(model.num_classes).to(model.device)
         for i in range(model.num_classes):
@@ -574,12 +586,15 @@ def phi(model, X, h, prediction = False, use_relu = False):
             mu = model.mu_outs2[i](mu)
             mu = mu.reshape(1, -1)
             mu = mu.reshape(mu.shape[0], -1, model.xd)
-            if model.initial_bias is not None:
-                for j in range(mu.shape[-1]):
-                    mu[:, :, j] = mu[:, :, j] + model.initial_bias[j]
+
             sig = model.sig_outs[i](h)
             sig = torch.exp(sig)
             sig = sig.reshape(mu.shape[0], -1, model.xd)
+            if model.initial_bias is not None:
+                for j in range(mu.shape[-1]):
+                    mu[:, :, j] = mu[:, :, j] + model.initial_bias[j]
+                for i in range(mu.shape[-1]):
+                    mu[:, :, i] = mu[:, :, i] + model.initial_bias[i]
             tmp = model.alpha_outs[i](h)
             alpha = torch.softmax(tmp, dim=1)
             probs[i] = torch_mixture_gaussian(X, mu, sig, alpha, prediction = False)

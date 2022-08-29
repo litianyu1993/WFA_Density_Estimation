@@ -48,6 +48,9 @@ class stream_density_wfa(nn.Module):
         elif self.model == 'gru':
             self.recurrent = nn.GRU(input_size=self.d, hidden_size=self.r,
                                num_layers=self.num_layers, batch_first=True)
+        elif self.model == 'no_rec':
+            tmp_core = torch.normal(0, self.init_std, [self.d, self.r])
+            self.A = nn.Parameter(tmp_core.clone().float().requires_grad_(True))
         elif self.model == 'hippo':
             q = np.arange(self.r, dtype=np.float64)
             col, row = np.meshgrid(q, q)
@@ -79,9 +82,9 @@ class stream_density_wfa(nn.Module):
                 self.alpha_outs.append(torch.nn.Linear( self.r,  self.mix_n, bias=True).requires_grad_(True))
         else:
             self.num_classes = None
-            self.mu_out = torch.nn.Linear( self.r,  self.mix_n *  self.xd, bias=True).requires_grad_(True)
-            self.sig_out = torch.nn.Linear( self.r,  self.mix_n *  self.xd, bias=True).requires_grad_(True)
-            self.alpha_out = torch.nn.Linear( self.r,  self.mix_n, bias=True).requires_grad_(True)
+            self.mu_out = torch.nn.Linear(self.r , self.mix_n * self.xd, bias=True).requires_grad_(True)
+            self.sig_out = torch.nn.Linear(self.r , self.mix_n * self.xd, bias=True).requires_grad_(True)
+            self.alpha_out = torch.nn.Linear(self.r, self.mix_n, bias=True).requires_grad_(True)
             self.mu_out2 = torch.nn.Linear( self.mix_n *  self.xd,  self.mix_n * self.xd, bias=True).requires_grad_(True)
 
         self.double_pre = parameter_dict['double_pre']
@@ -149,30 +152,43 @@ class stream_density_wfa(nn.Module):
             assert self.window_size >= 1
             current = X[i]
             current = encoding(self, current)
+
             if self.model == 'wfa':
 
                 tmp = torch.einsum("d, i, idj -> j", current, prev.ravel(), self.A).reshape(1, -1)
                 tmp = torch.sigmoid(tmp)
+                # next_x = X[i+1]
+                # out_tmp = torch.cat([tmp.reshape(1, -1), next_x.reshape(1, -1)], dim=1)
+
+            elif self.model == 'no_rec':
+
+                tmp = torch.einsum("d, dj -> j", X[i], self.A).reshape(1, -1)
+                tmp = torch.sigmoid(tmp)
             elif self.model == 'lstm':
-                output, (state_h, state_c) = self.recurrent(X[:self.window_size].reshape([1, self.window_size, -1]),
+                output, (state_h, state_c) = self.recurrent(current.reshape([1, 1, -1]),
                                                             prev)
                 tmp = (state_h, state_c)
+                # next_x = X[i+1]
+                # out_tmp = torch.cat([tmp[0].reshape(1, -1), next_x.reshape(1, -1)], dim=1)
 
 
             elif self.model == 'gru':
-                output, state_h = self.recurrent(X[:self.window_size].reshape([1, self.window_size, -1]), prev)
+                output, state_h = self.recurrent(current.reshape([1, 1, -1]), prev)
                 tmp = torch.sigmoid(state_h.detach())
+                # next_x = X[i+1]
+                # out_tmp = torch.cat([tmp.reshape(1, -1), next_x.reshape(1, -1)], dim=1)
+            prev = tmp
 
         if self.model == 'lstm':
-            tmp_result = phi(self, next, tmp[0].reshape(1, -1), prediction)
-            return tmp_result, (tmp[0].detach(), tmp[1].detach())
+            tmp_result, gmm_params = phi(self, next, tmp[0].reshape(1, -1), prediction)
+            return tmp_result, (tmp[0].detach(), tmp[1].detach()), gmm_params
         else:
-            tmp_result = phi(self, next, tmp.reshape(1, -1), prediction)
-            return tmp_result, tmp.detach()
+            tmp_result, gmm_params = phi(self, next, tmp.reshape(1, -1), prediction)
+            return tmp_result, tmp.detach(), gmm_params
 
 
-    def fit(self,train_x, optimizer, y = None, verbose = True, scheduler = None, pred_all = None, validation_number = 0, task = 'classification'):
-        if self.model == 'wfa':
+    def fit(self,train_x, optimizer, y = None, verbose = True, scheduler = None, pred_all = None, validation_number = 0, task = 'classification', ground_conditionals = None, sampled_x = None):
+        if self.model == 'wfa' or self.model == 'no_rec':
             prev = torch.softmax(torch.rand([1, self.A.shape[0]]), dim = 1).to(device)
         else:
             prev = self.init_state(1)
@@ -188,7 +204,7 @@ class stream_density_wfa(nn.Module):
             # for param_group in optimizer.param_groups:
             #     param_group['lr'] = 0.001
             optimizer.zero_grad()
-            pred_prob, _ = self(prev, train_x[i - lag:])
+            pred_prob, _, gmm_params = self(prev, train_x[i - lag:])
             reg_weight = 1.
             if task =='regression':
                 pred, _ =  self(prev, train_x[i - lag:], prediction = True)
@@ -232,8 +248,9 @@ class stream_density_wfa(nn.Module):
             elif task == 'density':
                 pred_all.append(pred_prob.detach().cpu().numpy())
                 if (i % self.evaluate_interval == 0) or i == train_x.shape[0] - 1 - self.window_size:
-                    print(i, loss.detach().cpu().numpy().item(), pred_prob.detach().cpu().numpy()[0])
-                    results.append([loss.detach().cpu().numpy().item(), pred_prob.detach().cpu().numpy()[0], 0, 0])
+                    MISE = self.MISE(ground_conditionals, sampled_x, i, gmm_params)
+                    print(i, loss.detach().cpu().numpy().item(), MISE)
+                    results.append([loss.detach().cpu().numpy().item(), MISE, 0, 0])
             elif task == 'regression':
                 pred_all.append(pred.detach().cpu().numpy())
                 current_mse = torch.mean((pred- train_x[i+1])**2).detach().cpu().numpy()
@@ -242,7 +259,7 @@ class stream_density_wfa(nn.Module):
 
                 results.append([loss.detach().cpu().numpy(), current_mse])
             prev = self.transit_next_state(prev, train_x[i-lag].float())
-            # self.initial_bias = train_x[i]
+            # self.initial_bias = train_x[i+1]
         return results, pred_all
 
     def transit_next_state(self, prev, x):
@@ -250,6 +267,10 @@ class stream_density_wfa(nn.Module):
         current = encoding(self, current)
         if self.model == 'wfa':
             tmp = torch.einsum("d, i, idj -> j", current, prev.ravel(), self.A).reshape(1, -1)
+            tmp = torch.sigmoid(tmp).detach()
+        elif self.model == 'no_rec':
+
+            tmp = torch.einsum("d, dj -> j", current, self.A).reshape(1, -1)
             tmp = torch.sigmoid(tmp).detach()
         elif self.model == 'lstm':
             output, (state_h, state_c) = self.recurrent(current.reshape([1, 1, -1]),
@@ -262,6 +283,16 @@ class stream_density_wfa(nn.Module):
             # tmp = torch.sigmoid(state_h).detach
         return tmp
 
+    def MISE(self, ground, sampled_X, index, gmm_params):
+        ave = 0.
+        mu, sig, alpha = gmm_params[0], gmm_params[1], gmm_params[2]
+        for i in range(len(sampled_X[index])):
+            x = sampled_X[index][i].reshape(-1, 1)
+            pred = torch_mixture_gaussian(torch.tensor(x).to(self.device), mu, sig, alpha, prediction = False)
+            pred = pred.detach().cpu().numpy()[0]
+            ave += (pred - ground[index][i])**2
+        return ave/len(sampled_X[index])
+
     def lossfunc(self, prev, X, task, y = None, reg_weight = 1.):
         if y is None:
             conditional_likelihood, tmp = self(prev, X)
@@ -269,7 +300,7 @@ class stream_density_wfa(nn.Module):
             return -log_likelihood, tmp
         else:
             if task == 'classification':
-                class_weights, tmp = self(prev, X)
+                class_weights, tmp, _ = self(prev, X)
                 # class_weights = torch.mul(class_weights, self.prior.to(self.device))
                 loss = nn.CrossEntropyLoss(label_smoothing=self.smoothing_factor)
                 one_hot_y = one_hot(y.reshape(-1), num_classes=self.num_classes).to(self.device)
@@ -277,12 +308,12 @@ class stream_density_wfa(nn.Module):
                 task_loss = loss(class_weights.reshape(1, -1), y.reshape(-1))# - reg_weight * reg
                 return task_loss, tmp
             elif task == 'density':
-                likelihood, tmp = self(prev, X, prediction = False)
+                likelihood, tmp, _ = self(prev, X, prediction = False)
                 return -likelihood, tmp
 
             elif task == 'regression':
-                pred, tmp = self(prev, X, prediction = True)
-                likelihood, tmp = self(prev, X, prediction = False)
+                pred, tmp, _ = self(prev, X, prediction = True)
+                likelihood, tmp, _ = self(prev, X, prediction = False)
                 y = y.reshape(pred.shape)
                 # return torch.mean((pred - y)**2), tmp
                 return - likelihood , tmp
@@ -330,7 +361,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     file_dir = os.path.dirname(os.path.realpath('__file__'))
     evaluate_interval = 100
-
+    ground_conditionals = None
+    sampled_x = None
     if args.exp_data == 'weather':
         X, y = get_weather()
         X = normalize(X)
@@ -395,12 +427,12 @@ if __name__ == '__main__':
     elif args.exp_data == 'interRBF':
         X, y = get_interRBF()
         X = normalize(X)
-        file_dir = os.path.join(file_dir, 'artificial', 'rbf')
+        file_dir = os.path.join(file_dir, 'artificial', 'interrbf')
         evaluate_interval = 950
     elif args.exp_data == 'movingRBF':
         X, y = get_movingRBF()
         X = normalize(X)
-        file_dir = os.path.join(file_dir, 'artificial', 'rbf')
+        file_dir = os.path.join(file_dir, 'artificial', 'movingrbf')
         evaluate_interval = 950
     elif args.exp_data == 'border':
         X, y = get_border()
@@ -437,13 +469,21 @@ if __name__ == '__main__':
         evaluate_interval = 100
 
     elif args.exp_data == 'hmm':
-        X, ground_truth_conditionals, ground_truth_joint = get_hmm(r= 3, N = 10000)
+        X, ground_truth_conditionals = get_hmm(r= 3, N = 1000)
         evaluate_interval = 100
         validation_number = 500
-        # X = normalize(X, lag = 1000)
+        sampled_X = X[0]
+        X = X[0, :, 0].reshape(-1, 1)
+        ground_truth_conditionals = ground_truth_conditionals[0]
+        # X = normalize(X)
+        print(ground_truth_conditionals.shape, X.shape, sampled_X.shape)
         np.savetxt('hmm_3_X.csv', X, delimiter= ',')
         np.savetxt('hmm_3_ground.csv', ground_truth_conditionals, delimiter=',')
+
         y = None
+
+    if  not os.path.exists(file_dir):
+        os.makedirs(file_dir)
     validation_number = min(1000, int(len(X)*0.2))
     # validation_number = len(X)
     if args.task == 'classification':
@@ -467,11 +507,11 @@ if __name__ == '__main__':
 
     lr = args.lr
     validation_results = {}
-    all_mix_ns = [2, 8, 16, 64, 128]
-    smoothing_factors = [0, 0.1, 0.3]
-    seeds = [1, 3, 5, 7, 9]
-    window_sizes = [1, 3, 5, 7, 9]
-    for r in [2, 8, 16, 64, 128]:
+    all_mix_ns = [5]
+    smoothing_factors = [0]
+    seeds = [1993]
+    window_sizes = [1]
+    for r in [5]:
         for mix_n in all_mix_ns:
             for sf in smoothing_factors:
                 for seed in seeds:
@@ -500,32 +540,23 @@ if __name__ == '__main__':
                         optimizer = optim.Adam(model.parameters(), lr=lr, amsgrad=True)
                         if args.task == 'density':
                             results, pred_all = model.fit(X[:validation_number], optimizer, y=None,
-                                                          verbose=True, scheduler=None, task=args.task)
+                                                          verbose=True, scheduler=None, task=args.task, ground_conditionals=ground_truth_conditionals, sampled_x=sampled_X)
                         else:
 
                             results, pred_all = model.fit(X[:validation_number], optimizer, y=y[:validation_number], validation_number = 0, verbose=True, scheduler=None, task=args.task)
-                            print(results)
+
                         if r not in validation_results:
                             validation_results[r] = {}
                             validation_results[r]['parameters'] = []
                             validation_results[r]['pred_all'] = []
                             validation_results[r]['final_auc'] = []
-                        # if r not in validation_results:
-                        #     validation_results[r] = {}
-                        #     validation_results[r]['parameters'] = [default_parameters]
-                        #     validation_results[r]['pred_all'] = [pred_all]
-                        #     if args.task == 'density':
-                        #         validation_results[r]['final_auc'] = [np.mean(np.asarray(results)[:, -3])]
-                        #     else:
-                        #         validation_results[r]['final_auc'] = [results[-1][-3]]
-                        # else:
                         validation_results[r]['pred_all'].append(pred_all)
                         validation_results[r]['parameters'].append(default_parameters)
                         if args.task == 'density':
                             validation_results[r]['final_auc'].append(np.mean(np.asarray(results)[:, -3]))
                         else:
                             validation_results[r]['final_auc'].append(results[-1][-3])
-    # print(validation_results)
+
     mix_ns = {}
     max_auc = -9999999
     parameters = {}
@@ -543,24 +574,19 @@ if __name__ == '__main__':
     if args.task == 'density': parameters['evaluate_interval'] = 1
     model = stream_density_wfa(parameters)
     optimizer = optim.Adam(model.parameters(), lr=lr, amsgrad=True)
-    results, pred_all = model.fit(X, optimizer, y = y, validation_number = validation_number, verbose=True, scheduler = None, task=args.task)
+    results, pred_all = model.fit(X, optimizer, y = y, validation_number = validation_number, verbose=True, scheduler = None, task=args.task, ground_conditionals=ground_truth_conditionals, sampled_x=sampled_X)
     results = np.asarray(results)
     # results[:, -3] += 1.
     if args.task == 'density':
-        plt.plot(results[:, -3], label = 'model')
-        plt.plot(ground_truth_conditionals, label = 'ground')
+        plt.plot(results[:, -3], label = args.method)
         plt.legend()
         plt.show()
-        diff = ground_truth_conditionals[parameters['window_size']:].reshape(-1) - results[:, -3]
-        print(diff.shape, ground_truth_conditionals.shape, results[:, -3].shape)
-        plt.plot(diff)
+        new_diff = np.zeros(len(results[:, -3]))
+        for i in range(100, len(results[:, -3])):
+            new_diff[i] = np.mean(results[:, -3][i-100:i])
+        plt.plot(new_diff[100:])
         plt.show()
-        new_diff = np.zeros(diff.shape)
-        for i in range(1, len(new_diff)):
-            new_diff[i] = np.mean(diff[:i])
-        plt.plot(new_diff)
-        plt.show()
-        print(np.mean(diff))
+        print(np.mean(results[:, -3][-100:]))
 
     save_file = {'selected_parameters': parameters, 'results': results}
     with open(os.path.join((file_dir), f'{args.method}_results'), 'wb') as f:
