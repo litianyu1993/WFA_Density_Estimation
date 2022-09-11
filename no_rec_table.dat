@@ -1,0 +1,14 @@
+python stream_sgd_wfa_windowed.py --exp_data interRBF --method no_rec --mix_n 20 --prob no --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data interRBF --method no_rec --mix_n 20 --prob yes --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data movingRBF --method no_rec --mix_n 20 --prob no --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data movingRBF --method no_rec --mix_n 20 --prob yes --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data covType --method no_rec --mix_n 20 --prob no --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data covType --method no_rec --mix_n 20 --prob yes --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data border --method no_rec --mix_n 20 --prob no --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data border --method no_rec --mix_n 20 --prob yes --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data overlap --method no_rec --mix_n 20 --prob no --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data overlap --method no_rec --mix_n 20 --prob yes --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data outdoor --method no_rec --mix_n 20 --prob no --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data outdoor --method no_rec --mix_n 20 --prob yes --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data COIL --method no_rec --mix_n 20 --prob no --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data COIL --method no_rec --mix_n 20 --prob yes --r 20 --window_size 1

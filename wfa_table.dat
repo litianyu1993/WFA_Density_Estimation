@@ -1,19 +1,7 @@
-python stream_sgd_wfa_windowed.py --exp_data covType --method wfa
-python stream_sgd_wfa_windowed.py --exp_data elec --method wfa
-python stream_sgd_wfa_windowed.py --exp_data outdoor --method wfa
-python stream_sgd_wfa_windowed.py --exp_data poker --method wfa
-python stream_sgd_wfa_windowed.py --exp_data rialto --method wfa
-python stream_sgd_wfa_windowed.py --exp_data weather --method wfa
-python stream_sgd_wfa_windowed.py --exp_data covTypetwoclasses --method wfa
-python stream_sgd_wfa_windowed.py --exp_data sea --method wfa
-python stream_sgd_wfa_windowed.py --exp_data mixeddrift --method wfa
-python stream_sgd_wfa_windowed.py --exp_data hyperplane --method wfa
-python stream_sgd_wfa_windowed.py --exp_data chess --method wfa
-python stream_sgd_wfa_windowed.py --exp_data outdoor --method wfa
-python stream_sgd_wfa_windowed.py --exp_data rialtotwoclasses --method wfa
-python stream_sgd_wfa_windowed.py --exp_data pokertwoclasses --method wfa
-python stream_sgd_wfa_windowed.py --exp_data interRBF --method wfa
-python stream_sgd_wfa_windowed.py --exp_data movingRBF --method wfa
-python stream_sgd_wfa_windowed.py --exp_data border --method wfa
-python stream_sgd_wfa_windowed.py --exp_data COIL --method wfa
-python stream_sgd_wfa_windowed.py --exp_data overlap --method wfa
+python stream_sgd_wfa_windowed.py --exp_data interRBF --method wfa --mix_n 20 --prob no --r 20 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data movingRBF --method wfa --mix_n 20 --prob no --r 20 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data covType --method wfa --mix_n 20 --prob no --r 20 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data border --method wfa --mix_n 20 --prob no --r 20 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data overlap --method wfa --mix_n 20 --prob no --r 20 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data outdoor --method wfa --mix_n 20 --prob no --r 20 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data COIL --method wfa --mix_n 20 --prob no --r 20 --window_size 5

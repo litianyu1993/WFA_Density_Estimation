@@ -9,10 +9,168 @@ import pickle
 import argparse
 import os
 import copy
+import math
+sp = nn.Softplus()
+from sklearn.mixture import GaussianMixture
 def get_lr(gamma, optimizer):
     return [group['lr'] * gamma
             for group in optimizer.param_groups]
 
+def gaussian(x, mu, sig):
+    n = 1
+    d = x.shape[0]
+    diag_sig = torch.diag(sig)
+    diff = (x - mu)
+    tmp1 = -d*n/2*np.log(2*torch.pi)
+    tmp2 = -n/2 * torch.log(torch.det(diag_sig))
+    tmp3 = -0.5*diff.reshape(1, -1)@torch.inverse(diag_sig)@ diff.reshape(-1, 1)
+    log_likeli = tmp1+tmp2+tmp3
+    return log_likeli
+def mix_of_gaussian(x, alpha, mus, sigs):
+    '''
+    alpha: shape k
+    mus: shape k by d
+    sigs: shape k by d
+    '''
+    if mus.ndim ==1:
+        mus= mus.reshape(-1, 1)
+    if sigs.ndim ==1:
+        sigs= sigs.reshape(-1, 1)
+    alpha = alpha.reshape(-1,)
+    log_likeli = 0.
+    for i in range(len(mus)):
+        mu = mus[i]
+        sig = sigs[i]
+        log_likeli += alpha[i] * gaussian(x, mu, sig)
+    return log_likeli
+
+
+def get_artificial_distribution(density_name, N = 2000, sample_n = 1000, seed = 1993):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if density_name == 'normal':
+        mix = D.Categorical(torch.ones(1, ))
+        comp = D.Normal(torch.ones(1, )*10, torch.ones(1, )*0.1)
+    elif density_name == 'skewed':
+        mix = D.Categorical(torch.tensor([1/5, 1/5, 3/5]))
+        comp = D.Normal(torch.tensor([0, 0.5, 13/12]), torch.tensor([1, 4/9, 25/49]))
+    elif density_name == 'strong_skewed':
+        mix = []
+        mu = []
+        sig = []
+        for l in range(8):
+            mix.append(1/8)
+            mu.append(3*((2/3)**l - 1))
+            sig.append( (2/3)**(2*l))
+        mix = D.Categorical(torch.tensor(mix))
+        comp = D.Normal(torch.tensor(mu), torch.tensor(sig)**0.5)
+    elif density_name == 'bimodal':
+        mix = D.Categorical(torch.tensor([0.5, 0.5]))
+        comp = D.Normal(torch.tensor([-1., 1.]), torch.tensor([2/3, 2/3]))
+    elif density_name == 'outlier':
+        mix = D.Categorical(torch.tensor([0.1, 0.9]))
+        comp = D.Normal(torch.zeros(2, ), torch.tensor([1, 0.1]))
+    elif density_name == 'trimodal':
+        mix = D.Categorical(torch.tensor([9/20, 9/20, 1/10]))
+        mu = [-6/5, 6/5, 0]
+        sig = [3/5, 3/5, 1/4]
+        comp = D.Normal(torch.tensor(mu), torch.tensor(sig))
+    elif density_name == 'smooth_comb':
+        mix = []
+        mu = []
+        sig = []
+        for l in range(6):
+            mix.append(2**(5-l))
+            mu.append((65 - 96*(0.5)**l)/21)
+            sig.append( (32/63)/(2**l))
+        mix = D.Categorical(torch.tensor(mix))
+        comp = D.Normal(torch.tensor(mu), torch.tensor(sig))
+    elif density_name == 'claw':
+        mix = [0.5]
+        mu = [0.]
+        sig = [1.]
+        for l in range(5):
+            mix.append(1/10)
+            mu.append(l/2 - 1)
+            sig.append(0.1)
+        mix = D.Categorical(torch.tensor(mix))
+        comp = D.Normal(torch.tensor(mu), torch.tensor(sig))
+    elif density_name == 'double_claw':
+        mix = [0.49, 0.49]
+        mu = [-1, 1]
+        sig = [2/3, 2/3]
+        for l in range(7):
+            mix.append(1/350)
+            mu.append((l-3)/2)
+            sig.append(0.01)
+        mix = D.Categorical(torch.tensor(mix))
+        comp = D.Normal(torch.tensor(mu), torch.tensor(sig))
+    elif density_name == 'sym_claw':
+        mix = [0.5]
+        mu = [0]
+        sig = [1]
+        for l in [-2, -1, 0, 1, 2]:
+            mix.append(2**(1-l)/31)
+            mu.append(l+0.5)
+            sig.append(2**(-l)/10)
+        mix = D.Categorical(torch.tensor(mix))
+        comp = D.Normal(torch.tensor(mu), torch.tensor(sig))
+    elif density_name == 'asym_double_claw':
+        mix = [0.46, 0.46]
+        mu = [-1, 1]
+        sig = [2/3, 2/3]
+        for l in [1, 2, 3]:
+            mix.append(1/300)
+            mu.append(-l/2)
+            sig.append(0.01)
+        for l in [1, 2, 3]:
+            mix.append(7/300)
+            mu.append(l/2)
+            sig.append(0.07)
+        mix = D.Categorical(torch.tensor(mix))
+        comp = D.Normal(torch.tensor(mu), torch.tensor(sig))
+    elif density_name == 'dis_comb':
+        mix = [2/7, 2/7, 2/7, 1/21, 1/21, 1/21]
+        mu = []
+        sig = [2/7, 2/7, 2/7, 1/21, 1/21, 1/21]
+        for l in [0, 1, 2]:
+            mu.append( (12*l - 15)/7)
+        for l in [8, 9, 10]:
+            mu.append( (2*l)/7)
+        mix = D.Categorical(torch.tensor(mix))
+        comp = D.Normal(torch.tensor(mu), torch.tensor(sig))
+    elif density_name == 'kurtotic':
+        mix = [2/3, 1/3]
+        mu = [0., 0.]
+        sig = [1, 0.1]
+        mix = D.Categorical(torch.tensor(mix))
+        comp = D.Normal(torch.tensor(mu), torch.tensor(sig))
+    elif density_name == 'sep_bimodal':
+        mix = [0.5, 0.5]
+        mu = [-1.5, 1.5]
+        sig = [0.5, 0.5]
+        mix = D.Categorical(torch.tensor(mix))
+        comp = D.Normal(torch.tensor(mu), torch.tensor(sig))
+    elif density_name == 'skew_bimodal':
+        mix = [0.75, 0.25]
+        mu = [0, 1.5]
+        sig = [1, 1/3]
+        mix = D.Categorical(torch.tensor(mix))
+        comp = D.Normal(torch.tensor(mu), torch.tensor(sig))
+
+    gmm = mixture_same_family.MixtureSameFamily(mix, comp)
+    X = gmm.sample_n(N*sample_n)
+    density = gmm.log_prob(X)
+    # X,_ = gm.sample(N * sample_n)
+    # gm.fit_predict(X)
+    # print(X.shape)
+    # density = gm.score_samples(X.reshape(-1, 1))
+    # print(density.shape)
+    # from matplotlib import pyplot as plt
+    # plt.scatter(X, torch.exp(density))
+    # plt.show()
+
+    return X.numpy().reshape(N, sample_n), density.numpy().reshape(N, sample_n)
 
 
 def get_copy_paste(n =1000, d = 3, lag = 10, seed = 1993):
@@ -40,6 +198,15 @@ def naive_prediction(y):
         if y[i] == y[i-1]: count += 1
     print(count/len(y))
 
+class copy_paste_density(nn.Module):
+    def __init__(self, lag = 5, seed = 1993):
+        np.random.seed(seed)
+        super().__init__()
+        self.sig = 1
+        self.lag = lag
+        self.mu = 0
+        torch.manual_seed(self.seed)
+
 
 class incremental_HMM(nn.Module):
 
@@ -56,7 +223,7 @@ class incremental_HMM(nn.Module):
         self.sig = torch.ones(r).reshape([1, r])
         self.init_w = torch.rand([1, r])
         self.init_w = torch.softmax(self.init_w, dim = 1)
-        self.mu_rates = torch.rand(r).reshape([1, r])
+        self.mu_rates = torch.ones(r).reshape([1, r])
         np.random.seed(seed)
         self.seed = seed
         torch.manual_seed(self.seed)
@@ -83,9 +250,10 @@ class incremental_HMM(nn.Module):
         sig = copy.deepcopy(self.sig)
         density = np.zeros(X.shape)
         for i in range(X.shape[1]):
-            if i % 100 == 0:
-                mu += 1
-                sig += 1
+            # if i % 100 == 0:
+            #     mu += 1
+            #     sig += 1
+            mu = self.mu_rates * i%5 *10
             gmm = self.torch_mixture_gaussian(mu, sig, h)
             for j in range(X.shape[2]):
                 tmp = gmm.log_prob(torch.tensor(X[:, i, j]))
@@ -101,7 +269,7 @@ class incremental_HMM(nn.Module):
         if stream:
             return density
 
-    def sample(self, l, n= 500, seed = 1993):
+    def sample(self, l, n= 10, seed = 1993):
         np.random.seed(seed)
         torch.manual_seed(seed)
         h = self.init_w
@@ -110,9 +278,11 @@ class incremental_HMM(nn.Module):
         mu = copy.deepcopy(self.mu_rates)
         sig = copy.deepcopy(self.sig)
         for i in range(l):
-            if i % 100 == 0:
-                mu += 1
-                sig += 1
+            # if i % 100 == 0:
+            #     mu += 1
+            #     sig += 1
+            mu = self.mu_rates * i%5 *10
+
             gmm = self.torch_mixture_gaussian(mu, sig, h)
             current_sample = self.sample_from_gmm(gmm, n).reshape(-1)
             samples[:, i, :] = current_sample
@@ -122,9 +292,9 @@ class incremental_HMM(nn.Module):
             #     h = h @ self.transition2
             # print(i,'sampling', mu.reshape(1, -1)@h.reshape(-1, 1))
         return samples
-def get_hmm(r = 3, N = 1000):
+def get_hmm(r = 3, N = 1000, n = 10):
     nshmm = incremental_HMM(r=r)
-    X = nshmm.sample(l=N)
+    X = nshmm.sample(l=N, n = n)
     # X = np.asarray(X).swapaxes(0, 1)
     ground_truth_conditionals = nshmm.score(X, stream = True)
     ground_truth_conditionals = np.asarray(ground_truth_conditionals)
@@ -532,6 +702,8 @@ def exp_parser():
     return parser
 
 def encoding(model, X):
+    # X = X.reshape(1, -1)
+
     X = model.encoder_1(X)
     X = torch.relu(X)
     X = model.encoder_2(X)
@@ -564,41 +736,72 @@ def phi(model, X, h, prediction = False, use_relu = False):
             mu = torch.relu(mu)
         else:
             mu = torch.exp(mu)
-        mu = model.mu_out2(mu)
+        mu = model.mu_out2(mu) + model.mu_bias
+
         mu = mu.reshape(mu.shape[0], -1, model.xd)
-        if model.initial_bias is not None:
-            for i in range(mu.shape[-1]):
-                mu[:, :, i] = mu[:, :, i] +  model.initial_bias[i]
+
+        # if model.initial_bias is not None:
+        #     for i in range(mu.shape[-1]):
+        #         mu[:, :, i] = mu[:, :, i] +  model.initial_bias[i]
+
 
 
         sig = model.sig_out(h)
-        sig = torch.exp(sig)
+
+        # sig = sp(sig)
+        sig = torch.relu(sig)
+        sig = model.sig_out2(sig)
+        sig = torch.relu(sig)
+        sig = model.sig_out3(sig)
+        sig = sp(sig)+ sp(model.sig_bias)
+        # sig = torch.abs(sig)
+        # print('sig', sig[0])
+        #
         sig = sig.reshape(mu.shape[0], -1, model.xd)
         tmp = model.alpha_out(h)
+        tmp = torch.relu(tmp)
+        tmp = model.alpha_out2(tmp)
         alpha = torch.softmax(tmp, dim=1)
+        # print(
+        #     'mu', mu[0]
+        # )
+        # print('alpha', alpha[0])
+        # print('sig', sig[0])
+        # print('h', h[0])
+        # print(X.shape, mu.shape, sig.shape, alpha.shape)
         return torch_mixture_gaussian(X, mu, sig, alpha, prediction), (mu, sig, alpha)
     else:
         probs = torch.ones(model.num_classes).to(model.device)
+        if not model.prob:
+            probs = model.no_prob_class_out(h)
+            return  probs, (0, 0, 0)
+
+        mu = model.mu_outs(h)
+        mu = torch.exp(mu)
+        mu = model.mu_outs2(mu)
+        mu = mu.reshape(1, -1)
+        mu = mu.reshape(mu.shape[0], -1, model.xd, model.num_classes)
+
+        sig = model.sig_outs(h)
+        sig = torch.exp(sig)
+        sig = sig.reshape(mu.shape[0], -1, model.xd, model.num_classes)
+        # if model.initial_bias is not None:
+        #     for j in range(mu.shape[-1]):
+        #         mu[:, :, j] = mu[:, :, j] + model.initial_bias[j]
+        #     for i in range(mu.shape[-1]):
+        #         mu[:, :, i] = mu[:, :, i] + model.initial_bias[i]
+        alpha = model.alpha_outs(h)
+        alpha = alpha.reshape(alpha.shape[0], -1, model.num_classes)
+
+
         for i in range(model.num_classes):
-
-            mu = model.mu_outs[i](h)
-            mu = torch.exp(mu)
-            mu = model.mu_outs2[i](mu)
-            mu = mu.reshape(1, -1)
-            mu = mu.reshape(mu.shape[0], -1, model.xd)
-
-            sig = model.sig_outs[i](h)
-            sig = torch.exp(sig)
-            sig = sig.reshape(mu.shape[0], -1, model.xd)
-            if model.initial_bias is not None:
-                for j in range(mu.shape[-1]):
-                    mu[:, :, j] = mu[:, :, j] + model.initial_bias[j]
-                for i in range(mu.shape[-1]):
-                    mu[:, :, i] = mu[:, :, i] + model.initial_bias[i]
-            tmp = model.alpha_outs[i](h)
-            alpha = torch.softmax(tmp, dim=1)
-            probs[i] = torch_mixture_gaussian(X, mu, sig, alpha, prediction = False)
-        return probs
+            mu_tmp = mu[:, :, :, i]
+            sig_tmp = sig[:, :, :, i]
+            alpha_tmp = alpha[:, :, i]
+            alpha_tmp = torch.softmax(alpha_tmp, dim = 1)
+            probs[i] = torch_mixture_gaussian(X, mu_tmp, sig_tmp, alpha_tmp, prediction = False)
+            # probs[i] = mu[0, 0, 0]
+        return probs, (mu, sig, alpha)
 
 
 
