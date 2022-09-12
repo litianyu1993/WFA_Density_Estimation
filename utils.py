@@ -773,7 +773,9 @@ def phi(model, X, h, prediction = False, use_relu = False):
     else:
         probs = torch.ones(model.num_classes).to(model.device)
         if not model.prob:
-            probs = model.no_prob_class_out(h)
+            probs = model.no_prob_class_out1(h)
+            probs = torch.relu(probs)
+            probs = model.no_prob_class_out2(probs)
             return  probs, (0, 0, 0)
 
         mu = model.mu_outs(h)

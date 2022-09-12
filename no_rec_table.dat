@@ -12,3 +12,11 @@ python stream_sgd_wfa_windowed.py --exp_data outdoor --method no_rec --mix_n 20 
 python stream_sgd_wfa_windowed.py --exp_data outdoor --method no_rec --mix_n 20 --prob yes --r 20 --window_size 1
 python stream_sgd_wfa_windowed.py --exp_data COIL --method no_rec --mix_n 20 --prob no --r 20 --window_size 1
 python stream_sgd_wfa_windowed.py --exp_data COIL --method no_rec --mix_n 20 --prob yes --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data rialto --method no_rec --mix_n 20 --prob no --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data rialto --method no_rec --mix_n 20 --prob yes --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data weather --method no_rec --mix_n 20 --prob no --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data weather --method no_rec --mix_n 20 --prob yes --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data poker --method no_rec --mix_n 20 --prob no --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data poker --method no_rec --mix_n 20 --prob yes --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data elec --method no_rec --mix_n 20 --prob no --r 20 --window_size 1
+python stream_sgd_wfa_windowed.py --exp_data elec --method no_rec --mix_n 20 --prob yes --r 20 --window_size 1

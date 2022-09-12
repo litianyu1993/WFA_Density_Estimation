@@ -5,3 +5,7 @@ python stream_sgd_wfa_windowed.py --exp_data border --method lstm --mix_n 20 --p
 python stream_sgd_wfa_windowed.py --exp_data overlap --method lstm --mix_n 20 --prob no --r 20 --window_size 5
 python stream_sgd_wfa_windowed.py --exp_data outdoor --method lstm --mix_n 20 --prob no --r 20 --window_size 5
 python stream_sgd_wfa_windowed.py --exp_data COIL --method lstm --mix_n 20 --prob no --r 20 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data rialto --method lstm --mix_n 20 --prob no --r 20 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data weather --method lstm --mix_n 20 --prob no --r 20 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data poker --method lstm --mix_n 20 --prob no --r 20 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data elec --method lstm --mix_n 20 --prob no --r 20 --window_size 5

@@ -82,7 +82,8 @@ class stream_density_wfa(nn.Module):
             self.mu_outs2 = nn.ModuleList()
             self.sig_outs = nn.ModuleList()
             self.alpha_outs = nn.ModuleList()
-            self.no_prob_class_out = torch.nn.Linear(self.r,  self.num_classes, bias=True).requires_grad_(True)
+            self.no_prob_class_out1 = torch.nn.Linear(self.r,  self.r, bias=True).requires_grad_(True)
+            self.no_prob_class_out2 = torch.nn.Linear(self.r, self.num_classes, bias=True).requires_grad_(True)
             self.mu_outs = torch.nn.Linear(self.r, self.mix_n * self.xd, bias=True).requires_grad_(True)
             self.mu_outs2 = torch.nn.Linear(self.mix_n * self.xd,  self.mix_n *  self.xd * self.num_classes, bias=True).requires_grad_(True)
             self.sig_outs = torch.nn.Linear( self.r,  self.mix_n *  self.xd * self.num_classes,  bias=True).requires_grad_(True)
@@ -626,14 +627,15 @@ if __name__ == '__main__':
 
     lr = args.lr
     validation_results = {}
-    all_mix_ns = [args.mix_n]
+    all_mix_ns = [args.mix_n, 5, 10]
     smoothing_factors = [0]
     seeds = [1993]
     # if args.method == 'no_rec':
     #     window_sizes = [1]
     # else:
     window_sizes = [args.window_size]
-    for r in [args.r]:
+    all_rs = [args.r, 32, 64, 128, 256]
+    for r in all_rs:
         for mix_n in all_mix_ns:
             for sf in smoothing_factors:
                 for seed in seeds:
