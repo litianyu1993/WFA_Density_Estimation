@@ -58,6 +58,8 @@ class stream_density_wfa(nn.Module):
         elif self.model == 'no_rec':
             tmp_core = torch.normal(0, 1, [self.d, self.r])
             self.A = nn.Parameter(tmp_core.clone().float().requires_grad_(True))
+            tmp_core = torch.normal(0, 1, [self.r, self.r])
+            self.B = nn.Parameter(tmp_core.clone().float().requires_grad_(True))
         elif self.model == 'hippo':
             q = np.arange(self.r, dtype=np.float64)
             col, row = np.meshgrid(q, q)
@@ -274,6 +276,7 @@ class stream_density_wfa(nn.Module):
                 loss, _ = self.lossfunc(prev, train_x[i - lag:], y=train_x[i+1:], reg_weight = reg_weight, task = task)
             elif task == 'classification':
                 target = y[i+1]
+                # print(target, i+1)
                 true_label.append(target.cpu().numpy())
                 # print(i-lag, i-lag+self.window_size-1, i+1)
                 loss, _ = self.lossfunc(prev, train_x[i - lag:], y=target, reg_weight=reg_weight, task=task)
@@ -296,6 +299,9 @@ class stream_density_wfa(nn.Module):
 
                 pred_class = torch.argmax(pred_prob).detach()
                 if i >= validation_number:
+                    target = target.reshape(pred_class.shape)
+                    # print(pred_class, target)
+
                     if pred_class == target: correct += 1
                     total += 1
                 pred_prob = pred_prob.reshape(-1, )
@@ -308,7 +314,7 @@ class stream_density_wfa(nn.Module):
                             pred_prob = pred_prob.detach().cpu().numpy()
                             results.append([loss.detach().cpu().numpy().item(), correct / total, auc, pred_prob[0], pred_prob[1]])
                         else:
-                            print(i, correct / total, pred_prob[0].detach(), pred_prob[1].detach())
+                            print(i, correct / total, pred_prob[0].detach(), pred_prob[1].detach(), pred_class, target)
                             pred_prob = pred_prob.detach().cpu().numpy()
                             results.append(
                                 [loss.detach().cpu().numpy().item(), correct / total, pred_prob[0], pred_prob[1]])
@@ -516,7 +522,7 @@ if __name__ == '__main__':
         file_dir = os.path.join(file_dir, 'realWorld', 'rialto')
     elif args.exp_data == 'rialto':
         X, y = get_rialto(two_classes=False)
-        X = normalize(X)
+        # X = normalize(X)
         file_dir = os.path.join(file_dir, 'realWorld', 'rialto')
     elif args.exp_data == 'poker':
         X, y = get_poker(two_classes=False)
@@ -533,6 +539,11 @@ if __name__ == '__main__':
         evaluate_interval = 950
     elif args.exp_data == 'movingRBF':
         X, y = get_movingRBF()
+        X = normalize(X)
+        file_dir = os.path.join(file_dir, 'artificial', 'movingrbf')
+        evaluate_interval = 950
+    elif args.exp_data == 'movingsquares':
+        X, y = get_movingSquares()
         X = normalize(X)
         file_dir = os.path.join(file_dir, 'artificial', 'movingrbf')
         evaluate_interval = 950
@@ -627,60 +638,62 @@ if __name__ == '__main__':
 
     lr = args.lr
     validation_results = {}
-    all_mix_ns = [args.mix_n, 5, 10]
+    all_mix_ns = [args.mix_n, 5, 10, 40]
     smoothing_factors = [0]
     seeds = [1993]
     # if args.method == 'no_rec':
     #     window_sizes = [1]
     # else:
-    window_sizes = [args.window_size]
-    all_rs = [args.r, 32, 64, 128, 256]
+    window_sizes = [args.window_size, 3, 5, 7, 9]
+    all_rs = [args.r, 8, 16, 32, 64, 128, 256]
+    lrs = [0.1, 0.01, 0.001, 0.0001]
     for r in all_rs:
         for mix_n in all_mix_ns:
             for sf in smoothing_factors:
                 for seed in seeds:
                     for ws in window_sizes:
-                        print(r, mix_n, sf, seed, ws)
-                        default_parameters = {
-                            'seed': seed,
-                            'task': args.task,
-                            'input_size': X.shape[1],
-                            'encoding_size': X.shape[1],
-                            'device': device,
-                            'evaluate_interval': evaluate_interval,
-                            'hidden_size': r,
-                            'mix_n': mix_n,
-                            'smoothing_factor': sf,
-                            'init_std': 0.001,
-                            'num_classes': args.nc,
-                            'double_pre': False,
-                            'initial_bias': None,
-                            'window_size': ws,
-                            'num_layers': 1,
-                            'model': args.method,
-                            'prob': args.prob
-                        }
-                        model = stream_density_wfa(default_parameters)
+                        for lr in lrs:
+                            print(r, mix_n, sf, seed, ws)
+                            default_parameters = {
+                                'seed': seed,
+                                'task': args.task,
+                                'input_size': X.shape[1],
+                                'encoding_size': X.shape[1],
+                                'device': device,
+                                'evaluate_interval': evaluate_interval,
+                                'hidden_size': r,
+                                'mix_n': mix_n,
+                                'smoothing_factor': sf,
+                                'init_std': 0.001,
+                                'num_classes': args.nc,
+                                'double_pre': False,
+                                'initial_bias': None,
+                                'window_size': ws,
+                                'num_layers': 1,
+                                'model': args.method,
+                                'prob': args.prob
+                            }
+                            model = stream_density_wfa(default_parameters)
 
-                        optimizer = optim.Adam(model.parameters(), lr=lr, amsgrad=True)
-                        if args.task == 'density':
-                            results, pred_all = model.fit(X[:validation_number], optimizer, y=None,
-                                                          verbose=True, scheduler=None, task=args.task, ground_conditionals=ground_truth_conditionals, sampled_x=sampled_X)
-                        else:
+                            optimizer = optim.Adam(model.parameters(), lr=lr, amsgrad=True)
+                            if args.task == 'density':
+                                results, pred_all = model.fit(X[:validation_number], optimizer, y=None,
+                                                              verbose=True, scheduler=None, task=args.task, ground_conditionals=ground_truth_conditionals, sampled_x=sampled_X)
+                            else:
 
-                            results, pred_all = model.fit(X[:validation_number], optimizer, y=y[:validation_number], validation_number = 0, verbose=True, scheduler=None, task=args.task)
+                                results, pred_all = model.fit(X[:validation_number], optimizer, y=y[:validation_number], validation_number = 0, verbose=True, scheduler=None, task=args.task)
 
-                        if r not in validation_results:
-                            validation_results[r] = {}
-                            validation_results[r]['parameters'] = []
-                            validation_results[r]['pred_all'] = []
-                            validation_results[r]['final_auc'] = []
-                        validation_results[r]['pred_all'].append(pred_all)
-                        validation_results[r]['parameters'].append(default_parameters)
-                        if args.task == 'density':
-                            validation_results[r]['final_auc'].append(np.mean(np.asarray(results)[:, -3]))
-                        else:
-                            validation_results[r]['final_auc'].append(results[-1][-3])
+                            if r not in validation_results:
+                                validation_results[r] = {}
+                                validation_results[r]['parameters'] = []
+                                validation_results[r]['pred_all'] = []
+                                validation_results[r]['final_auc'] = []
+                            validation_results[r]['pred_all'].append(pred_all)
+                            validation_results[r]['parameters'].append(default_parameters)
+                            if args.task == 'density':
+                                validation_results[r]['final_auc'].append(np.mean(np.asarray(results)[:, -3]))
+                            else:
+                                validation_results[r]['final_auc'].append(results[-1][-3])
 
     mix_ns = {}
     max_auc = -9999999

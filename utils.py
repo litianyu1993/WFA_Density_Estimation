@@ -783,7 +783,6 @@ def phi(model, X, h, prediction = False, use_relu = False):
         mu = model.mu_outs2(mu)
         mu = mu.reshape(1, -1)
         mu = mu.reshape(mu.shape[0], -1, model.xd, model.num_classes)
-
         sig = model.sig_outs(h)
         sig = torch.exp(sig)
         sig = sig.reshape(mu.shape[0], -1, model.xd, model.num_classes)
