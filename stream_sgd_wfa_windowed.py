@@ -664,7 +664,7 @@ if __name__ == '__main__':
     # else:
     window_sizes = [args.window_size]
     all_rs = [args.r]
-    lrs = [0.001]
+    lrs = [args.lr]
     for r in all_rs:
         for mix_n in all_mix_ns:
             for sf in smoothing_factors:
