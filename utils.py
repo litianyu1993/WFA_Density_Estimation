@@ -173,24 +173,53 @@ def get_artificial_distribution(density_name, N = 2000, sample_n = 1000, seed = 
     return X.numpy().reshape(N, sample_n), density.numpy().reshape(N, sample_n)
 
 
-def get_copy_paste(n =1000, d = 3, lag = 10, seed = 1993):
-
+def get_copy_paste(n =10000, d = 2, lag = 5, seed = 1993):
+    from scipy.stats import norm, multivariate_normal
     np.random.seed(seed)
-    X = np.random.normal(0, 1, size = [n, d])
+    X = np.random.normal(0, 1, size=[lag+1, d])
+    new_X = []
     y = []
-    y_neg = 0
-    y_pos = 0
-    for i in range(n):
-        if X[i - lag][0]<= 0:
-            y.append(1)
-            y_pos += 1
+    std = np.eye(2)
+    for i in range(lag+1):
+        new_X.append(X[i])
+        # y.append(multivariate_normal.logpdf(new_X[-1], mean = [0, 0], cov = std))
+        y.append(0)
+    for i in range(lag, n):
+        loc = new_X[i][0] - new_X[i-lag][0]
+        if loc >=0:
+            # x = np.random.normal(-1, 1, size = d)
+            x = multivariate_normal.rvs(mean = [0, 0], cov = std, size=1)
+            y.append(multivariate_normal.logpdf(x, mean = [0, 0], cov = std))
+            # y.append(1)
         else:
-            y.append(0)
-            y_neg += 1
+            x = multivariate_normal.rvs(mean = [0, -1], cov = std, size=1)
+            y.append(multivariate_normal.logpdf(x, mean = [0, -1], cov = std))
+            # y.append(0)
+        new_X.append(x)
+
+    new_X = np.asarray(new_X)
     y = np.asarray(y)
-    print(y_pos, y_neg, y_pos/n)
-    print(naive_prediction(y))
-    return X, y
+    print(new_X[100])
+    print(new_X.shape, y.shape)
+    return new_X, y
+
+    # np.random.seed(seed)
+    # X = np.random.normal(0, 1, size = [lag, d])
+    # y = []
+    # y_neg = 0
+    # y_pos = 0
+    # for i in range(n):
+    #     if X[i][0] - X[i-lag][0]>= 0:
+    #         y.append(1)
+    #         y_pos += 1
+    #     else:
+    #         y.append(0)
+    #         y_neg += 1
+    # # X = X[lag:]
+    # y = np.asarray(y)
+    # print(y_pos, y_neg, y_pos/n)
+    # print(naive_prediction(y))
+    # return X, y
 
 def naive_prediction(y):
     count = 0
@@ -250,15 +279,16 @@ class incremental_HMM(nn.Module):
         sig = copy.deepcopy(self.sig)
         density = np.zeros(X.shape)
         for i in range(X.shape[1]):
-            # if i % 100 == 0:
-            #     mu += 1
-            #     sig += 1
-            mu = self.mu_rates * i%5 *10
+            if i % 5 == 0:
+                mu += 1
+                # sig += 1
+            # mu =  mu +0.1 #* i%5 *10
             gmm = self.torch_mixture_gaussian(mu, sig, h)
             for j in range(X.shape[2]):
                 tmp = gmm.log_prob(torch.tensor(X[:, i, j]))
                 if stream:
                     density[0, i, j] = tmp
+            # h = h @ self.transition
             # if i % 1 == 0 and i % 2 != 0:
             #     h = h @ self.transition
             # if i %2 ==0:
@@ -278,14 +308,15 @@ class incremental_HMM(nn.Module):
         mu = copy.deepcopy(self.mu_rates)
         sig = copy.deepcopy(self.sig)
         for i in range(l):
-            # if i % 100 == 0:
-            #     mu += 1
-            #     sig += 1
-            mu = self.mu_rates * i%5 *10
+            if i % 5 == 0:
+                mu += 1
+                # sig += 1
+            # mu = mu +0.1# * i%5 *10
 
             gmm = self.torch_mixture_gaussian(mu, sig, h)
             current_sample = self.sample_from_gmm(gmm, n).reshape(-1)
             samples[:, i, :] = current_sample
+            # h = h @ self.transition
             # if i % 1 == 0 and i % 2 != 0:
             #     h = h @ self.transition
             # if i % 2 == 0:
@@ -705,7 +736,7 @@ def encoding(model, X):
     # X = X.reshape(1, -1)
 
     X = model.encoder_1(X)
-    X = torch.relu(X)
+    X = torch.sigmoid(X)
     X = model.encoder_2(X)
     return X
     # return X
@@ -735,32 +766,27 @@ def phi(model, X, h, prediction = False, use_relu = False):
         if use_relu:
             mu = torch.relu(mu)
         else:
-            mu = torch.exp(mu)
-        mu = model.mu_out2(mu) + model.mu_bias
+            mu = torch.relu(mu)
+        mu = model.mu_out2(mu) #+ model.mu_bias
 
         mu = mu.reshape(mu.shape[0], -1, model.xd)
-
-        # if model.initial_bias is not None:
-        #     for i in range(mu.shape[-1]):
-        #         mu[:, :, i] = mu[:, :, i] +  model.initial_bias[i]
-
-
 
         sig = model.sig_out(h)
 
         # sig = sp(sig)
-        sig = torch.relu(sig)
-        sig = model.sig_out2(sig)
-        sig = torch.relu(sig)
-        sig = model.sig_out3(sig)
-        sig = sp(sig)+ sp(model.sig_bias)
+        # sig = torch.relu(sig)
+        # sig = model.sig_out2(sig)
+        # sig = torch.relu(sig)
+        # sig = model.sig_out3(sig)
+        sig = torch.sp(sig)#+ sp(model.sig_bias)
         # sig = torch.abs(sig)
         # print('sig', sig[0])
         #
         sig = sig.reshape(mu.shape[0], -1, model.xd)
-        tmp = model.alpha_out(h)
-        tmp = torch.relu(tmp)
-        tmp = model.alpha_out2(tmp)
+
+        tmp = model.alpha_out2(h)
+        # tmp = torch.relu(tmp)
+        # tmp = model.alpha_out2(tmp)
         alpha = torch.softmax(tmp, dim=1)
         # print(
         #     'mu', mu[0]
@@ -800,8 +826,11 @@ def phi(model, X, h, prediction = False, use_relu = False):
             sig_tmp = sig[:, :, :, i]
             alpha_tmp = alpha[:, :, i]
             alpha_tmp = torch.softmax(alpha_tmp, dim = 1)
+            # print('h', h)
+            # print('alpha', alpha_tmp)
             probs[i] = torch_mixture_gaussian(X, mu_tmp, sig_tmp, alpha_tmp, prediction = False)
             # probs[i] = mu[0, 0, 0]
+
         return probs, (mu, sig, alpha)
 
 
