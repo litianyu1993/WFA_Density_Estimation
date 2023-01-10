@@ -38,6 +38,7 @@
 #  sbatch run_stream_data.sh
 # done
 
+
 export TABLE=RNADE.dat
 
 N_cases=$(cat "$TABLE" | wc -l)
@@ -47,3 +48,4 @@ for ((i=1; i<=$N_cases; i++))
   export I_FOR=$i
   sbatch run_stream_data.sh
  done
+
