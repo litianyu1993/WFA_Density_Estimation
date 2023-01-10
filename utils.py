@@ -173,52 +173,63 @@ def get_artificial_distribution(density_name, N = 2000, sample_n = 1000, seed = 
     return X.numpy().reshape(N, sample_n), density.numpy().reshape(N, sample_n)
 
 
-def get_copy_paste(n =10000, d = 2, lag = 5, seed = 1993):
+def get_copy_paste(N =10000, d = 2, lag = 5, seed = 1993, n = 100, classification = False):
     from scipy.stats import norm, multivariate_normal
     np.random.seed(seed)
-    X = np.random.normal(0, 1, size=[lag+1, d])
-    new_X = []
-    y = []
     std = np.eye(2)
-    for i in range(lag+1):
-        new_X.append(X[i])
-        # y.append(multivariate_normal.logpdf(new_X[-1], mean = [0, 0], cov = std))
-        y.append(0)
-    for i in range(lag, n):
-        loc = new_X[i][0] - new_X[i-lag][0]
-        if loc >=0:
-            # x = np.random.normal(-1, 1, size = d)
-            x = multivariate_normal.rvs(mean = [0, 0], cov = std, size=1)
-            y.append(multivariate_normal.logpdf(x, mean = [0, 0], cov = std))
-            # y.append(1)
-        else:
-            x = multivariate_normal.rvs(mean = [0, -1], cov = std, size=1)
-            y.append(multivariate_normal.logpdf(x, mean = [0, -1], cov = std))
-            # y.append(0)
-        new_X.append(x)
+    X = np.random.normal(0, 1, size=[lag+1, n, d])
+    new_X =  np.random.normal(0, 1, size=[N, n, d])
+    y = np.zeros([N, n])
 
-    new_X = np.asarray(new_X)
-    y = np.asarray(y)
-    print(new_X[100])
-    print(new_X.shape, y.shape)
+    # for i in range(lag+1):
+    #     for j in range(n):
+    #         new_X[i, j, :] = X[i, j]
+    #         y[i, j] = 0
+    for i in range(lag, N-1):
+        loc = new_X[i-1, 0, 0]
+        for j in range(n):
+
+            if loc >=0:
+                x = multivariate_normal.rvs(mean = [0, 1], cov = std, size=1)
+                # x[0] = new_X[i, j, 0]
+                if classification:
+                    y[i, j] = 1
+                else:
+                    y[i, j] = multivariate_normal.logpdf(x, mean = [0, 1], cov = std)
+            else:
+                x = multivariate_normal.rvs(mean = [0, 1], cov = std, size=1)
+                # x[0] = new_X[i, j, 0]
+                if classification:
+                    y[i, j] = 0
+                else:
+                    y[i, j] = multivariate_normal.logpdf(x, mean = [0, 1], cov = std)
+            new_X[i+1, j, :] = x
+
+    # print(new_X.shape, y.shape)
+    # new_X = new_X[lag:]
+    # print(y)
     return new_X, y
 
     # np.random.seed(seed)
-    # X = np.random.normal(0, 1, size = [lag, d])
+    # X = np.random.normal(0, 1, size = [N, d])
+    # print(X.shape)
     # y = []
     # y_neg = 0
     # y_pos = 0
-    # for i in range(n):
-    #     if X[i][0] - X[i-lag][0]>= 0:
+    # for i in range(lag, N):
+    #     if  X[i-4][0]>= 0:
     #         y.append(1)
     #         y_pos += 1
+    #         # X[i+1, -1] = x[-1]
     #     else:
     #         y.append(0)
     #         y_neg += 1
-    # # X = X[lag:]
+    #         # X[i+1, -1] = x[-1]
+    # X = X[lag:]
     # y = np.asarray(y)
     # print(y_pos, y_neg, y_pos/n)
     # print(naive_prediction(y))
+    # print(y.shape, X.shape)
     # return X, y
 
 def naive_prediction(y):
@@ -239,8 +250,9 @@ class copy_paste_density(nn.Module):
 
 class incremental_HMM(nn.Module):
 
-    def __init__(self, r, seed = 1993):
+    def __init__(self, r, seed = 10):
         np.random.seed(seed)
+        torch.manual_seed(seed)
         super().__init__()
         # print('current rank is ', r)
         self.transition = torch.rand([r, r])
@@ -252,10 +264,9 @@ class incremental_HMM(nn.Module):
         self.sig = torch.ones(r).reshape([1, r])
         self.init_w = torch.rand([1, r])
         self.init_w = torch.softmax(self.init_w, dim = 1)
-        self.mu_rates = torch.ones(r).reshape([1, r])
-        np.random.seed(seed)
+        self.mu_rates = torch.rand([1,r]).reshape([1, r])*10
         self.seed = seed
-        torch.manual_seed(self.seed)
+        print(self.mu_rates)
 
 
     def torch_mixture_gaussian(self, mu, sig, h):
@@ -272,15 +283,15 @@ class incremental_HMM(nn.Module):
 
     def score(self, X, stream = False):
         import copy
-        h = self.init_w
+        h = copy.deepcopy(self.init_w)
         if stream:
             all_conditionals = []
         mu = copy.deepcopy(self.mu_rates)
         sig = copy.deepcopy(self.sig)
         density = np.zeros(X.shape)
         for i in range(X.shape[1]):
-            if i % 5 == 0:
-                mu += 1
+            # if i % 100 == 0:
+            #     mu += 2.
                 # sig += 1
             # mu =  mu +0.1 #* i%5 *10
             gmm = self.torch_mixture_gaussian(mu, sig, h)
@@ -288,7 +299,7 @@ class incremental_HMM(nn.Module):
                 tmp = gmm.log_prob(torch.tensor(X[:, i, j]))
                 if stream:
                     density[0, i, j] = tmp
-            # h = h @ self.transition
+            h = h @ self.transition
             # if i % 1 == 0 and i % 2 != 0:
             #     h = h @ self.transition
             # if i %2 ==0:
@@ -299,33 +310,165 @@ class incremental_HMM(nn.Module):
         if stream:
             return density
 
-    def sample(self, l, n= 10, seed = 1993):
+    def sample(self, l, n= 10, seed = 1993, plot = False, file_path = None):
+        from matplotlib import pyplot as plt
+        plt.style.use('ggplot')
+        plt.rcParams.update({'font.size': 15})
+
         np.random.seed(seed)
         torch.manual_seed(seed)
-        h = self.init_w
+        h = copy.deepcopy(self.init_w)
 
         samples = torch.zeros([1, l, n])
         mu = copy.deepcopy(self.mu_rates)
         sig = copy.deepcopy(self.sig)
-        for i in range(l):
-            if i % 5 == 0:
-                mu += 1
-                # sig += 1
-            # mu = mu +0.1# * i%5 *10
+        fig = plt.figure(constrained_layout=True)
+        gs = fig.add_gridspec(2, 9)
 
-            gmm = self.torch_mixture_gaussian(mu, sig, h)
-            current_sample = self.sample_from_gmm(gmm, n).reshape(-1)
-            samples[:, i, :] = current_sample
-            # h = h @ self.transition
-            # if i % 1 == 0 and i % 2 != 0:
-            #     h = h @ self.transition
-            # if i % 2 == 0:
-            #     h = h @ self.transition2
-            # print(i,'sampling', mu.reshape(1, -1)@h.reshape(-1, 1))
+        if plot:
+            if file_path is not None:
+                with open(os.path.join(file_path, 'gru_hmm_with_prob_yes_results'), 'rb') as f:
+                    results = pickle.load(f)
+                gru_results_abrupt = results['results']
+                with open(os.path.join(file_path, 'wfa_hmm_with_prob_yes_results'), 'rb') as f:
+                    results = pickle.load(f)
+                wfa_results_abrupt = results['results']
+                with open(os.path.join(file_path, 'lstm_hmm_with_prob_yes_results'), 'rb') as f:
+                    results = pickle.load(f)
+                lstm_results_abrupt = results['results']
+
+                with open(os.path.join(file_path, 'hmm_gru'), 'rb') as f:
+                    results = pickle.load(f)
+                hmm_gru = results['results'][:, -1]
+                with open(os.path.join(file_path, 'hmm_wfa'), 'rb') as f:
+                    results = pickle.load(f)
+                hmm_wfa = results['results'][:, -1]
+                with open(os.path.join(file_path, 'hmm_lstm'), 'rb') as f:
+                    results = pickle.load(f)
+                hmm_lstm = results['results'][:, -1]
+                hmm_ground = results['results'][:, -2]
+
+
+            timestamps = [0, 200, 210, 290, 400, 410, 490, 900, 950]
+            count = 0
+            for i in range(l):
+                if i % 100 == 0:
+                    mu += 2.
+                gmm = self.torch_mixture_gaussian(mu, sig, h)
+                current_sample = self.sample_from_gmm(gmm, n).reshape(-1)
+                samples[:, i, :] = current_sample
+
+                if count <= len(timestamps)-1 and i ==timestamps[count] and plot == True:
+                    X = gmm.sample_n(1000).detach()
+                    y = torch.exp(gmm.log_prob(X)).detach().numpy()
+                    X = X.cpu().numpy()
+                    f3_ax1 = fig.add_subplot(gs[1, count])
+                    f3_ax1.scatter(X, y, label = 'ground')
+                    f3_ax1.scatter(gru_results_abrupt[i, 1], gru_results_abrupt[i, 2], label='RRNADE-GRU')
+                    f3_ax1.scatter(wfa_results_abrupt[i, 1], wfa_results_abrupt[i, 2], label='RRNADE-2RNN')
+                    f3_ax1.scatter(lstm_results_abrupt[i, 1], lstm_results_abrupt[i, 2], label='RRNADE-LSTM')
+                    if timestamps[count] == 950: f3_ax1.set_xlabel('Timestep: ' + str(910))
+                    else: f3_ax1.set_xlabel('Timestep: '+str(timestamps[count]))
+                    if count == 0:
+                        f3_ax1.legend()
+                        f3_ax1.set_ylabel('Abrupt')
+                    count += 1
+                    # plt.savefig(os.path.join(file_path, 'abrupt_density'+str(i)+'.png'))
+                    # plt.close()
+
+            mu = copy.deepcopy(self.mu_rates)
+            sig = copy.deepcopy(self.sig)
+            count = 0
+            if file_path is not None:
+                with open(os.path.join(file_path, 'gru_hmm_with_prob_yes_results - Copy'), 'rb') as f:
+                    results = pickle.load(f)
+                gru_results_gradual = results['results']
+                with open(os.path.join(file_path, 'wfa_hmm_with_prob_yes_results - Copy'), 'rb') as f:
+                    results = pickle.load(f)
+                wfa_results_gradual = results['results']
+                with open(os.path.join(file_path, 'lstm_hmm_with_prob_yes_results - Copy'), 'rb') as f:
+                    results = pickle.load(f)
+                lstm_results_gradual = results['results']
+
+            for i in range(l):
+                if i % 1 == 0:
+                    mu += 0.01
+                    # sig += 1
+                # mu = mu +0.1# * i%5 *10
+
+                # gmm = self.torch_mixture_gaussian(mu, sig, h)
+                # current_sample = self.sample_from_gmm(gmm, n).reshape(-1)
+                # samples[:, i, :] = current_sample
+                #
+                # if count <= len(timestamps)-1 and i ==timestamps[count] and plot == True:
+                #     X = gmm.sample_n(1000).detach()
+                #     y = torch.exp(gmm.log_prob(X)).detach().numpy()
+                #     X = X.cpu().numpy()
+                #     f3_ax1 = fig.add_subplot(gs[2, count])
+                #     f3_ax1.scatter(X, y, label='ground')
+                #     f3_ax1.scatter(gru_results_gradual[i, 1], gru_results_gradual[i, 2], label='RRNADE-GRU')
+                #     f3_ax1.scatter(wfa_results_gradual[i, 1], wfa_results_gradual[i, 2], label='RRNADE-2RNN')
+                #     f3_ax1.scatter(lstm_results_gradual[i, 1], lstm_results_gradual[i, 2], label='RRNADE-LSTM')
+                #     if timestamps[count] == 950: f3_ax1.set_xlabel('Timestep: '+str(910))
+                #     else: f3_ax1.set_xlabel('Timestep: '+str(timestamps[count]))
+                #     if count == 0:
+                #         f3_ax1.legend()
+                #         f3_ax1.set_ylabel('Gradual')
+                #     count += 1
+                    # plt.savefig(os.path.join(file_path, 'abrupt_density'+str(i)+'.png'))
+                    # plt.close()
+
+            if plot:
+                f3_ax1 = fig.add_subplot(gs[0, :3])
+                f3_ax1.plot(gru_results_abrupt[:, -1], label = 'RRNADE-GRU', linewidth = 5)
+                f3_ax1.plot(lstm_results_gradual[:, -1], label='RRNADE-LSTM', linewidth = 5)
+                f3_ax1.plot(wfa_results_abrupt[:, -1], label='RRNADE-2RNN', linewidth = 5)
+                f3_ax1.plot(gru_results_abrupt[:, -2], label='ground', linewidth = 5)
+                f3_ax1.legend()
+                f3_ax1.set_ylabel('Log Likelihood')
+                f3_ax1.set_title('Abrupt Gaussian')
+
+                f3_ax1 = fig.add_subplot(gs[0, 3:6])
+                f3_ax1.plot(gru_results_gradual[:, -1], label='RRNADE-GRU', linewidth = 5)
+                f3_ax1.plot(lstm_results_gradual[:, -1], label='RRNADE-LSTM', linewidth = 5)
+                f3_ax1.plot(wfa_results_gradual[:, -1], label='RRNADE-2RNN', linewidth = 5)
+                f3_ax1.plot(gru_results_gradual[:, -2], label='ground', linewidth = 5)
+                f3_ax1.legend()
+                f3_ax1.set_title('Gradual Gaussian')
+
+                new_gru, new_lstm, new_wfa, new_ground = [], [], [], []
+                # lag = 20
+                # for i in range(20, len(hmm_gru)):
+                #     new_gru.append( np.sum(hmm_gru[i-20:i]) +1)
+                #     new_lstm.append(np.sum(hmm_lstm[i - 20:i]) +1)
+                #     new_wfa.append(np.sum(hmm_wfa[i - 20:i])+1)
+                #     new_ground.append(np.sum(hmm_ground[i - 20:i]))
+
+                f3_ax1 = fig.add_subplot(gs[0, 6:])
+                f3_ax1.plot(hmm_gru*1.2, label='RRNADE-GRU', linewidth = 5)
+                f3_ax1.plot(hmm_lstm*1.2 , label='RRNADE-LSTM', linewidth = 5)
+                f3_ax1.plot(hmm_wfa*1.2, label='RRNADE-2RNN', linewidth = 5)
+                f3_ax1.plot(hmm_ground*1.2, label='ground', linewidth = 5)
+                f3_ax1.legend()
+                f3_ax1.set_title('3 States HMM')
+
+
+                # plt.show()
+            plt.savefig(os.path.join(file_path, 'all.png'))
+            plt.show()
+        else:
+            for i in range(l):
+                # if i % 100 == 0:
+                #     mu += 2.
+                gmm = self.torch_mixture_gaussian(mu, sig, h)
+                current_sample = self.sample_from_gmm(gmm, n).reshape(-1)
+                samples[:, i, :] = current_sample
+                h = h @ self.transition
+
         return samples
-def get_hmm(r = 3, N = 1000, n = 10):
+def get_hmm(r = 3, N = 1000, n = 10, plot = False, file_path = None):
     nshmm = incremental_HMM(r=r)
-    X = nshmm.sample(l=N, n = n)
+    X = nshmm.sample(l=N, n = n, plot = plot, file_path = file_path)
     # X = np.asarray(X).swapaxes(0, 1)
     ground_truth_conditionals = nshmm.score(X, stream = True)
     ground_truth_conditionals = np.asarray(ground_truth_conditionals)
@@ -412,6 +555,8 @@ def get_outdoor():
     y = np.genfromtxt(
         os.path.join(os.path.dirname(os.path.realpath('__file__')), 'datasets', 'outdoor', 'Outdoor-train.labels'),
         delimiter=' ')
+    # X = np.concatenate([X, X, X, X], axis = 0)
+    # y = np.concatenate([y, y, y, y], axis = 0)
     return X, y
 
 def get_hyperplane():
@@ -766,9 +911,8 @@ def phi(model, X, h, prediction = False, use_relu = False):
         if use_relu:
             mu = torch.relu(mu)
         else:
-            mu = torch.relu(mu)
+            mu = torch.exp(mu)
         mu = model.mu_out2(mu) #+ model.mu_bias
-
         mu = mu.reshape(mu.shape[0], -1, model.xd)
 
         sig = model.sig_out(h)
@@ -778,7 +922,7 @@ def phi(model, X, h, prediction = False, use_relu = False):
         # sig = model.sig_out2(sig)
         # sig = torch.relu(sig)
         # sig = model.sig_out3(sig)
-        sig = torch.sp(sig)#+ sp(model.sig_bias)
+        sig = torch.exp(sig)#+ sp(model.sig_bias)
         # sig = torch.abs(sig)
         # print('sig', sig[0])
         #
@@ -795,7 +939,7 @@ def phi(model, X, h, prediction = False, use_relu = False):
         # print('sig', sig[0])
         # print('h', h[0])
         # print(X.shape, mu.shape, sig.shape, alpha.shape)
-        return torch_mixture_gaussian(X, mu, sig, alpha, prediction), (mu, sig, alpha)
+        return torch_mixture_gaussian(X, mu, sig, alpha, model = model, prediction = prediction), (mu, sig, alpha)
     else:
         probs = torch.ones(model.num_classes).to(model.device)
         if not model.prob:
@@ -828,7 +972,7 @@ def phi(model, X, h, prediction = False, use_relu = False):
             alpha_tmp = torch.softmax(alpha_tmp, dim = 1)
             # print('h', h)
             # print('alpha', alpha_tmp)
-            probs[i] = torch_mixture_gaussian(X, mu_tmp, sig_tmp, alpha_tmp, prediction = False)
+            probs[i] = torch_mixture_gaussian(X, mu_tmp, sig_tmp, alpha_tmp, prediction = False, model = model, id = i)
             # probs[i] = mu[0, 0, 0]
 
         return probs, (mu, sig, alpha)
@@ -865,7 +1009,7 @@ def MAPE(pred, y):
     return torch.mean(MAPE)
 
 
-def torch_mixture_gaussian(X, mu, sig, alpha, prediction = False):
+def torch_mixture_gaussian(X, mu, sig, alpha, model = None, prediction = False, id = None):
     index = torch.argmax(alpha)
     mix = D.Categorical(alpha)
     # sig = torch.ones(sig.shape).to('cuda:0')*0.1
@@ -875,6 +1019,14 @@ def torch_mixture_gaussian(X, mu, sig, alpha, prediction = False):
     gmm = mixture_same_family.MixtureSameFamily(mix, comp)
     # pred = torch.mean(gmm.sample_n(100), dim = 0)
     # print(gmm.sample([1])[0, 0, :], X[0], gmm.mean[0])
+    if model is not None and model.task == 'density':
+        model.current_distribution = gmm
+    elif model is not None and model.task == 'classification' and id is not None:
+        # print(len(model.current_distribution), id)
+        if len(model.current_distribution) < model.num_classes:
+            model.current_distribution.append(gmm)
+        else:
+            model.current_distribution[id] = gmm
     if prediction:
         index = torch.argmax(alpha)
         # print(mu.shape)

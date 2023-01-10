@@ -19,6 +19,7 @@ class stream_density_wfa(nn.Module):
 
     def __init__(self, parameter_dict):
         super().__init__()
+        self.train_data = None
         torch.manual_seed(parameter_dict['seed'])
         self.task = parameter_dict['task']
         self.xd= parameter_dict['input_size']
@@ -59,7 +60,11 @@ class stream_density_wfa(nn.Module):
             tmp_core = torch.normal(0, 1, [self.d, self.r])
             self.A = nn.Parameter(tmp_core.clone().float().requires_grad_(True))
             tmp_core = torch.normal(0, 1, [self.r, self.r])
-            self.B = nn.Parameter(tmp_core.clone().float().requires_grad_(True))
+            self.B = nn.Parameter( tmp_core.clone().float().requires_grad_(True))
+        elif self.model == 'RNADE' or self.model == 'RNADE_reset':
+            tmp_core = torch.normal(0, 1, [self.d, self.r])
+            self.A = nn.Parameter(tmp_core.clone().float().requires_grad_(True))
+
         elif self.model == 'hippo':
             q = np.arange(self.r, dtype=np.float64)
             col, row = np.meshgrid(q, q)
@@ -77,8 +82,12 @@ class stream_density_wfa(nn.Module):
             self.out = nn.Parameter(tmp_core.clone().float().requires_grad_(True))
 
         # elif self.model == 'hippo':
-
-
+        if self.task == 'density':
+            self.current_distribution = None
+        else:
+            self.current_distribution = []
+        tmp_core = torch.normal(0, self.init_std, [1])
+        self.scaling = nn.Parameter(tmp_core.clone().float().requires_grad_(True))
         if self.num_classes is not None and self.task == 'classification':
             self.mu_outs = nn.ModuleList()
             self.mu_outs2 = nn.ModuleList()
@@ -120,6 +129,13 @@ class stream_density_wfa(nn.Module):
             self.double().to(self.device)
         else:
             self.float().to(self.device)
+
+    def reset_RNADE_weight(self):
+        if self.model == 'RNADE_reset':
+            tmp_core = torch.normal(0, 0.01, [self.d, self.r])
+            self.A.data = tmp_core.clone().float()
+            self.float().to(self.device)
+
 
     def get_prior(self, y, index, lag = 100):
         counts = torch.bincount(y[index - lag: index].reshape(-1))
@@ -182,17 +198,20 @@ class stream_density_wfa(nn.Module):
                 current = X[i+1]
             else:
                 current = X[i]
-            # print(i, current)
-            # current = encoding(self, current)
+            current = encoding(self, current)
             all_liklihood = 0.
             if self.model == 'wfa':
 
                 tmp = torch.einsum("d, i, idj -> j", current, prev.ravel(), self.A).reshape(1, -1)
                 tmp = torch.sigmoid(tmp)
+            elif self.model == 'RNADE' or self.model == 'RNADE_reset':
+                h = torch.einsum("d, dj -> j", current, self.A).reshape(1, -1)
+                tmp = prev.reshape(h.shape) + h
+                tmp = torch.sigmoid(tmp)
             elif self.model == 'no_rec':
 
-                tmp = torch.einsum("d, dj -> j", current, self.A).reshape(1, -1)
-                tmp = torch.sigmoid(tmp)
+                # tmp = torch.einsum("d, dj -> j", current, self.A).reshape(1, -1)
+                tmp = torch.sigmoid(prev)
             elif self.model == 'lstm':
                 output, (state_h, state_c) = self.recurrent(current.reshape([1, 1, -1]),
                                                             prev)
@@ -204,8 +223,6 @@ class stream_density_wfa(nn.Module):
             elif self.model == 'gru':
                 output, state_h = self.recurrent(current.reshape([1, 1, -1]), prev)
                 tmp =(state_h)
-            # if i == 0:
-            #     next_tmp = tmp
             prev = tmp
         # print(tmp)
         # if loss:
@@ -219,10 +236,11 @@ class stream_density_wfa(nn.Module):
             return tmp_result, tmp.detach(), gmm_params
 
     def fit_density(self, train_x, optimizer, y = None, verbose = True, scheduler = None, pred_all = None, validation_number = 0, task = 'classification', ground_conditionals = None):
-        if self.model == 'wfa' or self.model == 'no_rec':
-            prev = torch.softmax(torch.rand([1, self.A.shape[0]]), dim = 1).to(device)
+        if self.model == 'wfa' or self.model == 'no_rec' or self.model == 'RNADE' or self.model == 'RNADE_reset':
+            prev = torch.softmax(torch.rand([1, self.r]), dim = 1).to(device)
         else:
             prev = self.init_state(1)
+
         lag = self.window_size - 1
         for i in range(lag, train_x.shape[0] - self.window_size - 1):
             MISE_tmp = []
@@ -251,10 +269,11 @@ class stream_density_wfa(nn.Module):
                 results.append([loss.detach().cpu().numpy().item(), MISE, L_inf, 0, 0])
 
     def fit(self,train_x, optimizer, y = None, verbose = True, scheduler = None, pred_all = None, validation_number = 0, task = 'classification', ground_conditionals = None, sampled_x = None):
-        if self.model == 'wfa' or self.model == 'no_rec':
-            prev = torch.softmax(torch.rand([1, self.A.shape[0]]), dim = 1).to(device)
+        if self.model == 'wfa' or self.model == 'no_rec' or self.model == 'RNADE' or self.model == 'RNADE_reset':
+            prev = torch.softmax(torch.rand([1, self.r]), dim = 1).to(device)
         else:
             prev = self.init_state(1)
+        self.train_data = train_x
         joint_likelihood = 0.
         correct = 0
         total = 0
@@ -264,8 +283,6 @@ class stream_density_wfa(nn.Module):
         true_label = []
         lag = self.window_size - 1
         for i in range(lag, train_x.shape[0]-self.window_size-1):
-            # for param_group in optimizer.param_groups:
-            #     param_group['lr'] = 0.001
             optimizer.zero_grad()
             pred_prob, _, gmm_params = self(prev, train_x[i - lag:])
             reg_weight = 1.
@@ -274,8 +291,6 @@ class stream_density_wfa(nn.Module):
                 loss, _ = self.lossfunc(prev, train_x[i - lag:], y=train_x[i+1:], reg_weight = reg_weight, task = task)
             elif task == 'classification':
                 target = y[i+1]
-                # print(target, train_x[i+1])
-                # print(target, i+1)
                 true_label.append(target.cpu().numpy())
                 # print(i-lag, i-lag+self.window_size-1, i+1)
                 loss, _ = self.lossfunc(prev, train_x[i - lag:], y=target, reg_weight=reg_weight, task=task)
@@ -306,6 +321,7 @@ class stream_density_wfa(nn.Module):
                 pred_prob = pred_prob.reshape(-1, )
                 pred_all.append(torch.softmax(pred_prob, dim = 0).detach().cpu().numpy())
                 if (i >= 100 and i % self.evaluate_interval == 0) or i == train_x.shape[0] - 1 - self.window_size:
+                    # samples, likelihood = self.sampling()
                     if i >= validation_number:
                         if self.num_classes == 2:
                             auc = sklearn.metrics.roc_auc_score(np.asarray(true_label), np.asarray(pred_all)[:, 1])
@@ -316,17 +332,18 @@ class stream_density_wfa(nn.Module):
                             print(i, correct / total, pred_prob[0].detach(), pred_prob[1].detach(), pred_class, target)
                             pred_prob = pred_prob.detach().cpu().numpy()
                             results.append(
-                                [loss.detach().cpu().numpy().item(), correct / total, pred_prob[0], pred_prob[1]])
+                                [loss.detach().cpu().numpy().item(),correct / total, pred_prob[0], pred_prob[1]])
             elif task == 'density':
                 pred_all.append(pred_prob.detach().cpu().numpy())
                 self.evaluate_interval = 1
+                samples, likelihood = self.sampling()
                 if (i % self.evaluate_interval == 0) or i == train_x.shape[0] - 1 - self.window_size:
                     # MISE = self.MISE(ground_conditionals, sampled_x, i+self.window_size-1, gmm_params)
                     # L_inf = self.L_inf(ground_conditionals, sampled_x, i, gmm_params)
                     ave_like = self.average_likelihood(sampled_x, i, gmm_params)
 
                     print(i, loss.detach().cpu().numpy().item(), np.mean(ground_conditionals[i]), ave_like)
-                    results.append([loss.detach().cpu().numpy().item(), np.mean(ground_conditionals[i]), ave_like])
+                    results.append([loss.detach().cpu().numpy().item(), samples, likelihood, 0, np.mean(ground_conditionals[i]), ave_like])
             elif task == 'regression':
                 pred_all.append(pred.detach().cpu().numpy())
                 current_mse = torch.mean((pred- train_x[i+1])**2).detach().cpu().numpy()
@@ -335,9 +352,30 @@ class stream_density_wfa(nn.Module):
 
                 results.append([loss.detach().cpu().numpy(), current_mse])
             prev = self.transit_next_state(prev, train_x[i-lag].float())
+            self.reset_RNADE_weight()
             # self.initial_bias = train_x[i]
         self.prev = prev
+
         return results, pred_all
+
+    def sampling(self):
+        if self.task == 'density':
+            X = self.current_distribution.sample_n(1000).detach()
+            y = torch.exp(self.current_distribution.log_prob(X)).detach().cpu().numpy()
+            X = X.cpu().numpy()
+            return X, y
+        else:
+            out_x, out_y = [], []
+            for i in range(self.num_classes):
+                X = self.current_distribution[i].sample_n(10000).detach()
+                # X = torch.tensor(self.train_data).to(self.device)
+                y = torch.exp(self.current_distribution[i].log_prob(X)).detach().cpu().numpy()
+                X = X.cpu().numpy()
+                out_x.append(X)
+                out_y.append(y)
+            return out_x, out_y
+
+
 
     def transit_next_state(self, prev, x):
         current = x
@@ -347,7 +385,11 @@ class stream_density_wfa(nn.Module):
             tmp = torch.sigmoid(tmp).detach()
         elif self.model == 'no_rec':
 
-            tmp = torch.einsum("d, dj -> j", current, self.A).reshape(1, -1)
+            # tmp = torch.einsum("d, dj -> j", current, self.A).reshape(1, -1)
+            tmp = torch.sigmoid(prev).detach()
+        elif self.model == 'RNADE' or self.model == 'RNADE_reset':
+            h = torch.einsum("d, dj -> j", current, self.A).reshape(1, -1)
+            tmp = prev.ravel() + h
             tmp = torch.sigmoid(tmp).detach()
         elif self.model == 'lstm':
             output, (state_h, state_c) = self.recurrent(current.reshape([1, 1, -1]),
@@ -366,7 +408,7 @@ class stream_density_wfa(nn.Module):
         all_pred = []
         if len(sampled_X) <= index: return 0.
         for i in range(len(sampled_X[index])):
-            x = sampled_X[index].reshape(-1, self.xd)
+            x = sampled_X[index][i].reshape(-1, self.xd)
             pred = torch_mixture_gaussian(torch.tensor(x).to(self.device), mu, sig, alpha, prediction=False)
             pred = pred.detach().cpu().numpy()[0]
             ave += pred
@@ -449,6 +491,7 @@ def get_args():
     parser.add_argument('--task', default='classification', help='task to perform')
     parser.add_argument('--N', default=2000, type = int, help='number of examples')
     parser.add_argument('--prob', default='yes', help='if using probability')
+    parser.add_argument('--plot', default='no', help='if ploting')
     return parser
 import copy
 def normalize(X):
@@ -554,7 +597,7 @@ if __name__ == '__main__':
         evaluate_interval = 950
     elif args.exp_data == 'movingRBF':
         X, y = get_movingRBF()
-        # X = normalize(X)
+        X = normalize(X)
         file_dir = os.path.join(file_dir, 'artificial', 'movingrbf')
         evaluate_interval = 950
     elif args.exp_data == 'movingsquares':
@@ -565,6 +608,9 @@ if __name__ == '__main__':
     elif args.exp_data == 'border':
         X, y = get_border()
         X = normalize(X)
+        # X = np.concatenate([X, X], axis = 0)
+        # y = np.concatenate([y, y], axis=0)
+
         file_dir = os.path.join(file_dir, 'datasets', 'border')
     elif args.exp_data == 'COIL':
         X, y = get_COIL()
@@ -591,29 +637,40 @@ if __name__ == '__main__':
         file_dir = os.path.join(file_dir, 'datasets', 'letter')
 
     elif args.exp_data == 'copy_paste':
-        X, y = get_copy_paste(lag =5, n = args.N)
-        if args.task == 'density':
-            ground_truth_conditionals = y
-            sampled_X = X
-        # X = normalize(X)
+
+
         file_dir = os.path.join(file_dir, 'datasets', 'copy_paste')
-        evaluate_interval = 100
+
+        if args.task == 'density':
+            X, y = get_copy_paste(lag=5, N=args.N)
+            sampled_X = copy.deepcopy(X)
+            ground_truth_conditionals = copy.deepcopy(y)
+            X = X[:, 0, :]
+        else:
+            X, y = get_copy_paste(lag=5, N=args.N, n = 1, classification=True)
+            X = X[:, 0, :]
+            y = y[:, 0].astype(int)
+        evaluate_interval = 50
 
     elif args.exp_data == 'hmm':
-
-        X, ground_truth_conditionals = get_hmm(r= 3, N = args.N, n = 10)
+        file_dir = os.path.join(file_dir, 'artificial', 'hmm')
+        if args.plot == 'yes':
+            plot = True
+        else:
+            plot = False
+        tmp_X, ground_truth_conditionals = get_hmm(r= 3, N = args.N, n = 100, plot = plot, file_path = file_dir)
         evaluate_interval = 5
         validation_number = 500
-        X = X[0]
+        X = tmp_X[0, :, 0]
 
-        sampled_X = copy.deepcopy(X).reshape(len(X), -1)
-        X = X[:, 0].reshape(-1, 1)
+        sampled_X = copy.deepcopy(tmp_X[0]).reshape(len(X), -1)
+        X = X.reshape(-1, 1)
         ground_truth_conditionals = ground_truth_conditionals[0]
         # X = normalize(X)
         print(ground_truth_conditionals.shape, X.shape, sampled_X.shape)
+
         np.savetxt('hmm_3_X.csv', X, delimiter= ',')
         np.savetxt('hmm_3_ground.csv', ground_truth_conditionals, delimiter=',')
-
         y = None
     else:
         X, ground_truth_conditionals = get_artificial_distribution(density_name = args.exp_data, N=args.N, sample_n = 10)
@@ -643,6 +700,9 @@ if __name__ == '__main__':
     if args.task == 'classification':
         tmp_y = y.clone().cpu().numpy().reshape(-1)
         args.nc = len(Counter(tmp_y).keys())
+        print(Counter(tmp_y))
+        max_key = max(Counter(tmp_y), key=Counter(tmp_y).get)
+        print('Naive prediction: ', Counter(tmp_y)[max_key]/len(tmp_y))
     print(X.shape, args.nc, args.lr)
     # import time
     # time.sleep(2)
@@ -742,7 +802,7 @@ if __name__ == '__main__':
         ground = results[:, -2]
         # diff = results[:, -1] - results[:, -2]
         # new_diff = []
-        print(np.mean(pred), np.mean(ground))
+        print(np.mean(pred), ground.shape)
         new_pred = []
         new_ground = []
         for i in range(100, len(pred)):
@@ -753,38 +813,12 @@ if __name__ == '__main__':
         plt.legend()
         plt.show()
 
-        # print('L_inf', 'MISE')
-        # print(np.mean(results[:, -3]), np.mean(results[:, -4]))
-        # pred_prob, _, gmm_params = model(model.prev, X[-model.window_size-1:])
-        # ave = 0.
-        # mu, sig, alpha = gmm_params[0], gmm_params[1], gmm_params[2]
-        # exp_pred = []
-        # exp_ground = []
-        # # sampled_X, ground_truth_conditionals = get_artificial_distribution(density_name=args.exp_data, N=2000, sample_n=10)
-        #
-        # for j in range(len(sampled_X)):
-        #     for i in range(len(sampled_X[-1])):
-        #         x = sampled_X[j][i].reshape(-1, 1)
-        #         pred = torch_mixture_gaussian(torch.tensor(x).to(model.device), mu, sig, alpha, prediction=False)
-        #         pred = pred.detach().cpu().numpy()[0]
-        #         pred = np.exp(pred)
-        #         tmp_ground = np.exp(ground_truth_conditionals[j][i])
-        #         exp_pred.append(pred)
-        #         exp_ground.append(tmp_ground)
-        #
-        # plt.scatter(sampled_X.reshape(-1, ), exp_pred, label = args.method)
-        # plt.scatter(sampled_X.reshape(-1, ), exp_ground, label = 'ground')
-        # plt.legend()
-        # plt.show()
-
-
-        # new_diff = np.zeros(len(results[:, -3]))
-        # for i in range(100, len(results[:, -3])):
-        #     new_diff[i] = np.mean(results[:, -3][i-100:i])
-        # plt.plot(new_diff[100:])
-        # plt.show()
-
+        plt.plot(pred, label=args.method)
+        plt.plot(ground, label='ground')
+        plt.legend()
+        plt.show()
 
     save_file = {'selected_parameters': parameters, 'results': results}
     with open(os.path.join((file_dir), f'{args.method}_{args.exp_data}_with_prob_{args.prob}_results'), 'wb') as f:
+        print(os.path.join((file_dir), f'{args.method}_{args.exp_data}_with_prob_{args.prob}_results'))
         pickle.dump(save_file, f)
