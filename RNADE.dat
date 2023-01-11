@@ -26,3 +26,11 @@ python stream_sgd_wfa_windowed.py --exp_data hyperplane --method RNADE --mix_n 2
 python stream_sgd_wfa_windowed.py --exp_data hyperplane --method RNADE_reset --mix_n 20 --prob yes --r 128 --window_size 5
 python stream_sgd_wfa_windowed.py --exp_data chess --method RNADE --mix_n 20 --prob yes --r 128 --window_size 5
 python stream_sgd_wfa_windowed.py --exp_data chess --method RNADE_reset --mix_n 20 --prob yes --r 128 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data pokertwoclasses --method RNADE --mix_n 20 --prob yes --r 128 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data pokertwoclasses --method RNADE_reset --mix_n 20 --prob yes --r 128 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data rialtotwoclasses --method RNADE --mix_n 20 --prob yes --r 128 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data rialtotwoclasses --method RNADE_reset --mix_n 20 --prob yes --r 128 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data covTypetwoclasses --method RNADE --mix_n 20 --prob yes --r 128 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data covTypetwoclasses --method RNADE_reset --mix_n 20 --prob yes --r 128 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data mixeddrift --method RNADE --mix_n 20 --prob yes --r 128 --window_size 5
+python stream_sgd_wfa_windowed.py --exp_data mixeddrift --method RNADE_reset --mix_n 20 --prob yes --r 128 --window_size 5
